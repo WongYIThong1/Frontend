@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseService } from '@/lib/supabase'
 import { verifyJwt } from '@/lib/auth'
 
+type Machine = {
+  id: string
+  name: string | null
+}
+
 export async function GET(request: NextRequest) {
   try {
     // 从 cookie 中获取 session token
@@ -94,20 +99,20 @@ export async function PATCH(request: NextRequest) {
     }
 
     // 更新机器名称
-    const { data: updatedMachine, error: updateError } = await supabaseService
+    const updateResult = await (supabaseService
       .from('machines')
-      .update({ name: cleanName, updated_at: new Date().toISOString() })
+      .update({ name: cleanName, updated_at: new Date().toISOString() } as never)
       .eq('id', machineId)
       .eq('user_id', userId)
       .select('id, name')
-      .single()
+      .single() as unknown as Promise<{ data: Machine | null; error: Error | null }>)
 
-    if (updateError) {
-      console.error('Database update error:', updateError)
+    if (updateResult.error || !updateResult.data) {
+      console.error('Database update error:', updateResult.error)
       return NextResponse.json({ error: 'Failed to update machine name' }, { status: 500 })
     }
 
-    return NextResponse.json({ machine: updatedMachine }, { status: 200 })
+    return NextResponse.json({ machine: updateResult.data }, { status: 200 })
   } catch (error) {
     console.error('Update machine name error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

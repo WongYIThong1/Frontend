@@ -39,13 +39,13 @@ export async function POST(request: NextRequest) {
     }
 
     // 更新 Discord ID
-    const { error: updateError } = await supabaseService
+    const updateResult = await (supabaseService
       .from('users')
-      .update({ discord_id: cleanDiscordId })
-      .eq('id', userId)
+      .update({ discord_id: cleanDiscordId } as never)
+      .eq('id', userId) as unknown as Promise<{ error: Error | null }>)
 
-    if (updateError) {
-      console.error('Failed to update Discord ID:', updateError)
+    if (updateResult.error) {
+      console.error('Failed to update Discord ID:', updateResult.error)
       return NextResponse.json({ error: 'Failed to bind Discord ID' }, { status: 500 })
     }
 

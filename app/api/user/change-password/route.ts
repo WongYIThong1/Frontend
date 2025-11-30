@@ -64,13 +64,13 @@ export async function POST(request: NextRequest) {
     const newPasswordHash = bcrypt.hashSync(newPassword, saltRounds)
 
     // 更新密码
-    const { error: updateError } = await supabaseService
+    const updateResult = await (supabaseService
       .from('users')
-      .update({ password_hash: newPasswordHash })
-      .eq('id', userId)
+      .update({ password_hash: newPasswordHash } as never)
+      .eq('id', userId) as unknown as Promise<{ error: Error | null }>)
 
-    if (updateError) {
-      console.error('Failed to update password:', updateError)
+    if (updateResult.error) {
+      console.error('Failed to update password:', updateResult.error)
       return NextResponse.json({ error: 'Failed to change password' }, { status: 500 })
     }
 

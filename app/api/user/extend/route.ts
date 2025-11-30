@@ -99,13 +99,13 @@ export async function POST(request: NextRequest) {
     }
 
     // 更新用户过期时间
-    const { error: updateUserError } = await supabaseService
+    const updateUserResult = await (supabaseService
       .from('users')
-      .update({ expires_at: newExpiresAt.toISOString() })
-      .eq('id', userId)
+      .update({ expires_at: newExpiresAt.toISOString() } as never)
+      .eq('id', userId) as unknown as Promise<{ error: Error | null }>)
 
-    if (updateUserError) {
-      console.error('Failed to update user expires_at:', updateUserError)
+    if (updateUserResult.error) {
+      console.error('Failed to update user expires_at:', updateUserResult.error)
       return NextResponse.json({ error: 'Failed to extend account' }, { status: 500 })
     }
 
