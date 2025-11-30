@@ -76,9 +76,9 @@ export async function POST(request: NextRequest) {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         newApiKey = `sk_${randomBytes(32).toString('hex')}`
 
-        const { error: updateError } = await supabaseService
+        const { error: updateError } = await (supabaseService as any)
           .from('users')
-          .update({ apikey: newApiKey } satisfies Partial<User>)
+          .update({ apikey: newApiKey })
           .eq('id', typedUser.id)
 
         if (!updateError) {
