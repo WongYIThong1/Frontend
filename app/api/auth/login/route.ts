@@ -18,7 +18,6 @@ export async function POST(request: NextRequest) {
   try {
     const { username, password, rememberMe } = await request.json()
 
-    // 清理输入（去除前后空格）
     const cleanUsername = username?.trim()
     const cleanPassword = password?.trim()
 
@@ -70,43 +69,37 @@ export async function POST(request: NextRequest) {
 
     let finalApikey = typedUser.apikey
     if (!finalApikey) {
+      const maxAttempts = 5
       let newApiKey: string | null = null
-      let isUnique = false
-      let attempts = 0
-      const maxAttempts = 10
+      let updateSuccess = false
 
-      while (!isUnique && attempts < maxAttempts) {
-        attempts++
-        const randomPart = randomBytes(32).toString('hex')
-        newApiKey = `sk_${randomPart}`
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        newApiKey = `sk_${randomBytes(32).toString('hex')}`
 
-        const { data: existingKey } = await supabaseService
+        const { error: updateError } = await supabaseService
           .from('users')
-          .select('id')
-          .eq('apikey', newApiKey)
-          .maybeSingle()
+          .update({ apikey: newApiKey })
+          .eq('id', typedUser.id)
 
-        if (!existingKey) {
-          isUnique = true
+        if (!updateError) {
+          updateSuccess = true
+          break
+        }
+
+        const msg = updateError.message || ''
+        // 若数据库唯一约束冲突则重试，否则直接报错
+        if (!(msg.includes('duplicate') || msg.includes('unique') || msg.includes('UNIQUE'))) {
+          console.error(`Error updating API key (attempt ${attempt}):`, updateError)
+          break
         }
       }
 
-      if (!isUnique || !newApiKey) {
+      if (!updateSuccess || !newApiKey) {
+        console.error(`Failed to generate unique API key after ${maxAttempts} attempts for user ${typedUser.id}`)
         return NextResponse.json(
           { error: 'Failed to generate unique API key. Please try again.' },
           { status: 500 }
         )
-      }
-
-      // Update API key in database
-      const updateResult = await (supabaseService
-        .from('users')
-        .update({ apikey: newApiKey } as never)
-        .eq('id', typedUser.id) as unknown as Promise<{ error: Error | null }>)
-
-      if (updateResult.error) {
-        console.error('Failed to update API key:', updateResult.error)
-        return NextResponse.json({ error: 'Failed to generate API key' }, { status: 500 })
       }
 
       finalApikey = newApiKey
@@ -141,8 +134,6 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     )
 
-    // 在开发环境中，secure 应该为 false（localhost 使用 http）
-    // 在生产环境中，secure 应该为 true（使用 https）
     const proto = request.headers.get('x-forwarded-proto') || 'http'
     const isSecure = proto === 'https'
     
