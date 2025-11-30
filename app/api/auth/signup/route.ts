@@ -2,6 +2,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseService } from '@/lib/supabase'
 import bcrypt from 'bcryptjs'
 
+type License = {
+  id: string
+  day: number
+  status: string
+  license_key: string
+}
+
+type User = {
+  id: string
+  username: string
+  plan: number
+  status: string
+  expires_at: string
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { username, password, licenseKey } = await request.json()
@@ -40,29 +55,22 @@ export async function POST(request: NextRequest) {
       .eq('license_key', cleanLicenseKey)
       .maybeSingle()
 
-    if (licenseCheckError) {
+    if (licenseCheckError || !licenseCheck) {
       console.error('License check error:', licenseCheckError)
-      return NextResponse.json(
-        { error: 'Error checking license key', details: licenseCheckError.message },
-        { status: 500 }
-      )
-    }
-
-    if (!licenseCheck) {
       return NextResponse.json(
         { error: 'Invalid license key' },
         { status: 400 }
       )
     }
 
-    if (licenseCheck.status !== 'Inactive') {
+    const license = licenseCheck as License
+
+    if (license.status !== 'Inactive') {
       return NextResponse.json(
         { error: 'License key has already been used or is expired' },
         { status: 400 }
       )
     }
-
-    const license = licenseCheck
 
     // 哈希密码
     const saltRounds = 10
@@ -92,21 +100,23 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const typedUser = newUser as User
+
     // 更新 license
-    const { error: updateLicenseError } = await supabaseService
+    const updateLicenseResult = await (supabaseService
       .from('licenses')
       .update({
         status: 'Active',
-        user_id: newUser.id,
+        user_id: typedUser.id,
         activated_at: new Date().toISOString(),
-      })
-      .eq('id', license.id)
+      } as never)
+      .eq('id', license.id) as unknown as Promise<{ error: Error | null }>)
 
-    if (updateLicenseError) {
+    if (updateLicenseResult.error) {
       // 如果更新 license 失败，尝试删除刚创建的用户（回滚）
-      await supabaseService.from('users').delete().eq('id', newUser.id)
+      await supabaseService.from('users').delete().eq('id', typedUser.id)
       return NextResponse.json(
-        { error: 'Failed to activate license', details: updateLicenseError.message },
+        { error: 'Failed to activate license', details: updateLicenseResult.error.message },
         { status: 500 }
       )
     }
@@ -115,11 +125,11 @@ export async function POST(request: NextRequest) {
       {
         message: 'Account created successfully',
         user: {
-          id: newUser.id,
-          username: newUser.username,
-          plan: newUser.plan,
-          status: newUser.status,
-          expires_at: newUser.expires_at,
+          id: typedUser.id,
+          username: typedUser.username,
+          plan: typedUser.plan,
+          status: typedUser.status,
+          expires_at: typedUser.expires_at,
         },
       },
       { status: 201 }
