@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     expiresAt.setDate(expiresAt.getDate() + license.day)
 
     // 创建用户
-    const { data: newUser, error: createUserError } = await supabaseService
+    const createUserResult = await (supabaseService
       .from('users')
       .insert({
         username: cleanUsername,
@@ -89,9 +89,11 @@ export async function POST(request: NextRequest) {
         plan: license.day,
         status: 'Active',
         expires_at: expiresAt.toISOString(),
-      })
+      } as never)
       .select('id, username, plan, status, expires_at')
-      .single()
+      .single() as unknown as Promise<{ data: User | null; error: Error | null }>)
+    
+    const { data: newUser, error: createUserError } = createUserResult
 
     if (createUserError || !newUser) {
       return NextResponse.json(
