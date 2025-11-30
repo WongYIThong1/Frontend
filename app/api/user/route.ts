@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseService } from '@/lib/supabase'
 import { verifyJwt } from '@/lib/auth'
 
+type User = {
+  id: string
+  username: string
+  apikey: string | null
+  discord_id: string | null
+  expires_at: string | null
+  plan: number
+}
+
 export async function GET(request: NextRequest) {
   try {
     // 从 cookie 中获取 session token
@@ -34,19 +43,17 @@ export async function GET(request: NextRequest) {
       .eq('id', userId)
       .single()
 
-    if (error) {
+    if (error || !user) {
       console.error('Database query error:', error)
-      return NextResponse.json({ error: 'Failed to fetch user information' }, { status: 500 })
-    }
-
-    if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
+    const typedUser = user as User
+
     // 计算剩余天数
     let daysRemaining = 0
-    if (user.expires_at) {
-      const expiresAt = new Date(user.expires_at)
+    if (typedUser.expires_at) {
+      const expiresAt = new Date(typedUser.expires_at)
       const now = new Date()
       const diffTime = expiresAt.getTime() - now.getTime()
       daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
@@ -54,13 +61,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       user: {
-        id: user.id,
-        username: user.username,
-        apikey: user.apikey || '',
-        discordId: user.discord_id || '',
-        expiresAt: user.expires_at,
+        id: typedUser.id,
+        username: typedUser.username,
+        apikey: typedUser.apikey || '',
+        discordId: typedUser.discord_id || '',
+        expiresAt: typedUser.expires_at,
         daysRemaining: daysRemaining > 0 ? daysRemaining : 0,
-        plan: user.plan,
+        plan: typedUser.plan,
       },
     }, { status: 200 })
   } catch (error) {

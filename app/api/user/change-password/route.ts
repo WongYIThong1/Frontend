@@ -3,6 +3,10 @@ import { supabaseService } from '@/lib/supabase'
 import { verifyJwt } from '@/lib/auth'
 import bcrypt from 'bcryptjs'
 
+type User = {
+  password_hash: string | null
+}
+
 export async function POST(request: NextRequest) {
   try {
     // 从 cookie 中获取 session token
@@ -49,12 +53,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    if (!user.password_hash) {
+    const typedUser = user as User
+
+    if (!typedUser.password_hash) {
       return NextResponse.json({ error: 'Password change not available for this account' }, { status: 400 })
     }
 
     // 验证当前密码
-    const isPasswordValid = bcrypt.compareSync(currentPassword, user.password_hash)
+    const isPasswordValid = bcrypt.compareSync(currentPassword, typedUser.password_hash)
     if (!isPasswordValid) {
       return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 })
     }
