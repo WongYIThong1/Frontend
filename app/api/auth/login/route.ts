@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
 
         const { error: updateError } = await supabaseService
           .from('users')
-          .update({ apikey: newApiKey })
+          .update({ apikey: newApiKey } satisfies Partial<User>)
           .eq('id', typedUser.id)
 
         if (!updateError) {
