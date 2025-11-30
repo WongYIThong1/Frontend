@@ -4,6 +4,16 @@ import { signJwt } from '@/lib/auth'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
 
+type User = {
+  id: string
+  username: string
+  password_hash: string | null
+  plan: number
+  status: string
+  expires_at: string | null
+  apikey: string | null
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { username, password, rememberMe } = await request.json()
@@ -29,39 +39,37 @@ export async function POST(request: NextRequest) {
       .eq('username', cleanUsername)
       .single()
 
-    if (userError) {
+    if (userError || !user) {
       console.error('Database query error:', userError)
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
     }
 
-    if (!user) {
-      console.error('User not found for username:', cleanUsername)
+    const typedUser = user as User
+
+    if (!typedUser.password_hash) {
+      console.error('User has no password_hash:', typedUser.id)
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
     }
 
-    if (!user.password_hash) {
-      console.error('User has no password_hash:', user.id)
-      return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
-    }
-
-    const isPasswordValid = bcrypt.compareSync(cleanPassword, user.password_hash)
+    const isPasswordValid = bcrypt.compareSync(cleanPassword, typedUser.password_hash)
     if (!isPasswordValid) {
       console.error('Password validation failed for user:', cleanUsername)
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
     }
 
-    if (user.status !== 'Active') {
+    if (typedUser.status !== 'Active') {
       return NextResponse.json({ error: 'Account is suspended' }, { status: 403 })
     }
 
-    if (user.expires_at) {
-      const expiresAt = new Date(user.expires_at)
+    if (typedUser.expires_at) {
+      const expiresAt = new Date(typedUser.expires_at)
       if (expiresAt < new Date()) {
         return NextResponse.json({ error: 'Account has expired' }, { status: 403 })
       }
     }
 
-    if (!user.apikey) {
+    let finalApikey = typedUser.apikey
+    if (!finalApikey) {
       let newApiKey: string | null = null
       let isUnique = false
       let attempts = 0
@@ -90,21 +98,21 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      const { error: updateError } = await supabaseService
+      // Update API key in database
+      const updateResult = await (supabaseService
         .from('users')
-        .update({ apikey: newApiKey })
-        .eq('id', user.id)
+        .update({ apikey: newApiKey } as never)
+        .eq('id', typedUser.id) as unknown as Promise<{ error: Error | null }>)
 
-      if (updateError) {
-        console.error('Failed to update API key:', updateError)
+      if (updateResult.error) {
+        console.error('Failed to update API key:', updateResult.error)
         return NextResponse.json({ error: 'Failed to generate API key' }, { status: 500 })
       }
 
-      user.apikey = newApiKey
+      finalApikey = newApiKey
     }
 
-    const { password_hash, apikey, ...userWithoutSensitiveData } = user
-    const finalApiKey = user.apikey || ''
+    const { password_hash, apikey, ...userWithoutSensitiveData } = typedUser
 
     const sessionSecret = process.env.SESSION_SECRET
     if (!sessionSecret) {
@@ -117,8 +125,8 @@ export async function POST(request: NextRequest) {
     const expiresInSeconds = rememberMe ? 60 * 60 * 24 * 30 : 60 * 60 * 2
     const token = signJwt(
       {
-        sub: user.id,
-        username: user.username,
+        sub: typedUser.id,
+        username: typedUser.username,
         exp: Math.floor(Date.now() / 1000) + expiresInSeconds,
       },
       sessionSecret
@@ -128,7 +136,7 @@ export async function POST(request: NextRequest) {
       {
         message: 'Login successful',
         user: userWithoutSensitiveData,
-        apikey: finalApiKey,
+        apikey: finalApikey || '',
       },
       { status: 200 }
     )
