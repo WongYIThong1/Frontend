@@ -1,12 +1,22 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Home, CheckSquare, Server, Menu, X, FolderOpen, Wrench, History, Settings, LogOut, ChevronDown, Bell } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SettingsDialog } from "@/components/settings-dialog"
+import { Skeleton } from "@/components/ui/skeleton"
+
+type NotificationItem = {
+  id: string
+  title: string
+  message: string
+  type: string
+  read: boolean
+  created_at: string
+}
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,6 +48,95 @@ export function DashboardSidebar() {
   const [showNotificationMenu, setShowNotificationMenu] = useState(false)
   const [showSettingsDialog, setShowSettingsDialog] = useState(false)
   const [isBellShaking, setIsBellShaking] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [notificationsError, setNotificationsError] = useState<string | null>(null)
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(false)
+  const [isMarkingNotifications, setIsMarkingNotifications] = useState(false)
+  const hasUnreadNotifications = notifications.some((notification) => !notification.read)
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      setIsLoadingNotifications(true)
+      setNotificationsError(null)
+      const response = await fetch("/api/notifications", {
+        credentials: "include",
+      })
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setNotifications([])
+          setNotificationsError("Please log in again to view notifications.")
+          return
+        }
+        throw new Error("Failed to fetch notifications")
+      }
+
+      const data = await response.json()
+      setNotifications(data.notifications || [])
+    } catch (error) {
+      console.error("Notifications fetch error:", error)
+      setNotificationsError("Unable to load notifications.")
+    } finally {
+      setIsLoadingNotifications(false)
+    }
+  }, [])
+
+  const handleMarkAllRead = async () => {
+    const unreadIds = notifications.filter((notification) => !notification.read).map((notification) => notification.id)
+    if (unreadIds.length === 0) {
+      return
+    }
+
+    try {
+      setIsMarkingNotifications(true)
+      const response = await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ids: unreadIds }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to mark notifications as read")
+      }
+
+      setNotifications((prev) => prev.map((notification) => (unreadIds.includes(notification.id) ? { ...notification, read: true } : notification)))
+    } catch (error) {
+      console.error("Notifications mark read error:", error)
+      setNotificationsError("Failed to update notifications.")
+    } finally {
+      setIsMarkingNotifications(false)
+    }
+  }
+
+  const handleNotificationToggle = () => {
+    const nextState = !showNotificationMenu
+    setShowNotificationMenu(nextState)
+    if (nextState && !isLoadingNotifications) {
+      fetchNotifications()
+    }
+  }
+
+  const formatNotificationTime = (isoDate: string) => {
+    const date = new Date(isoDate)
+    if (Number.isNaN(date.getTime())) {
+      return ""
+    }
+    return date.toLocaleString()
+  }
+
+  const getNotificationBadgeStyles = (type: string) => {
+    switch (type) {
+      case "plan_expiring":
+        return { label: "Expiring soon", className: "bg-amber-500/10 text-amber-300" }
+      case "plan_expired":
+        return { label: "Expired", className: "bg-red-500/10 text-red-300" }
+      case "plan_active":
+        return { label: "Active", className: "bg-green-500/10 text-green-300" }
+      default:
+        return { label: "General", className: "bg-muted/50 text-muted-foreground" }
+    }
+  }
 
   useEffect(() => {
     // 确保在客户端环境中访问 localStorage
@@ -75,6 +174,20 @@ export function DashboardSidebar() {
       setDaysRemaining("Error loading data")
     }
   }, [])
+
+  // 首次加载时拉取一次通知
+  useEffect(() => {
+    fetchNotifications()
+  }, [fetchNotifications])
+
+  // 定时轮询，保证通知列表在不刷新页面的情况下也会自动更新
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchNotifications()
+    }, 15000) // 每 15 秒刷新一次
+
+    return () => clearInterval(interval)
+  }, [fetchNotifications])
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -211,7 +324,7 @@ export function DashboardSidebar() {
                 data-notification-menu
               >
                 <button
-                  onClick={() => setShowNotificationMenu(!showNotificationMenu)}
+                  onClick={handleNotificationToggle}
                   onMouseEnter={() => {
                     setIsBellShaking(true)
                     setTimeout(() => setIsBellShaking(false), 1200)
@@ -223,8 +336,9 @@ export function DashboardSidebar() {
                     showNotificationMenu && "text-sidebar-foreground scale-110",
                     isBellShaking && "animate-shake"
                   )} />
-                  {/* Notification badge - can be conditionally shown */}
-                  {/* <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 ring-2 ring-sidebar"></span> */}
+                  {hasUnreadNotifications && (
+                    <span className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-sidebar" />
+                  )}
                 </button>
 
                 {/* Notification Dropdown Menu */}
@@ -237,15 +351,63 @@ export function DashboardSidebar() {
                   )}
                   data-notification-menu
                 >
-                  <div className="p-4 border-b border-sidebar-border">
+                  <div className="flex items-center justify-between gap-2 p-4 border-b border-sidebar-border">
                     <h3 className="text-sm font-semibold text-sidebar-foreground">Notifications</h3>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs text-muted-foreground hover:text-sidebar-foreground"
+                      onClick={handleMarkAllRead}
+                      disabled={!hasUnreadNotifications || isMarkingNotifications}
+                    >
+                      {isMarkingNotifications ? "Updating..." : "Mark all as read"}
+                    </Button>
                   </div>
                   <div className="max-h-96 overflow-y-auto">
-                    {/* Empty state */}
-                    <div className="flex flex-col items-center justify-center py-8 px-4">
-                      <Bell className="h-8 w-8 text-muted-foreground mb-2" />
-                      <p className="text-sm text-muted-foreground text-center">No notifications</p>
-                    </div>
+                    {isLoadingNotifications ? (
+                      <div className="space-y-3 p-4">
+                        {[0, 1, 2].map((item) => (
+                          <div key={item} className="space-y-2">
+                            <Skeleton className="h-4 w-1/2 bg-sidebar-border/60" />
+                            <Skeleton className="h-3 w-full bg-sidebar-border/40" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : notificationsError ? (
+                      <div className="flex flex-col items-center justify-center py-8 px-4 text-center text-sm text-red-400">
+                        {notificationsError}
+                      </div>
+                    ) : notifications.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-8 px-4">
+                        <Bell className="h-8 w-8 text-muted-foreground mb-2" />
+                        <p className="text-sm text-muted-foreground text-center">No notifications</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-sidebar-border">
+                        {notifications.map((notification) => {
+                          const { label, className } = getNotificationBadgeStyles(notification.type)
+                          return (
+                            <div key={notification.id} className="p-4 space-y-2">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                  <p className="text-sm font-medium text-sidebar-foreground">{notification.title}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {formatNotificationTime(notification.created_at)}
+                                  </p>
+                                </div>
+                                {!notification.read && (
+                                  <span className="mt-1 inline-flex h-2 w-2 rounded-full bg-primary" />
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground">{notification.message}</p>
+                              <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", className)}>
+                                {label}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -303,3 +465,4 @@ export function DashboardSidebar() {
     </>
   )
 }
+
