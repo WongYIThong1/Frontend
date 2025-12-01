@@ -1,23 +1,50 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function HomePage() {
   const router = useRouter()
+  const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    // 检查是否有 session token
-    const hasSession = document.cookie.includes('session_token=')
-    
-    if (hasSession) {
-      // 如果有 session，重定向到 dashboard
-      router.push('/dashboard')
-    } else {
-      // 如果没有 session，重定向到登录页
-      router.push('/login')
+    let isMounted = true
+    const controller = new AbortController()
+
+    const checkSession = async () => {
+      try {
+        const res = await fetch('/api/user', {
+          credentials: 'include',
+          signal: controller.signal,
+        })
+
+        if (!isMounted) return
+
+        if (res.ok) {
+          router.replace('/dashboard')
+        } else {
+          router.replace('/login')
+        }
+      } catch (error) {
+        console.error('Session check failed:', error)
+        if (isMounted) router.replace('/login')
+      } finally {
+        if (isMounted) setChecking(false)
+      }
+    }
+
+    checkSession()
+
+    return () => {
+      isMounted = false
+      // 仅在仍未完成时才 abort，避免已完成请求触发 AbortError
+      if (!controller.signal.aborted) {
+        controller.abort()
+      }
     }
   }, [router])
+
+  if (!checking) return null
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
