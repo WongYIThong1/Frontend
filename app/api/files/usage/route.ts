@@ -53,7 +53,11 @@ export async function GET(request: NextRequest) {
       if (listError) {
         console.error("Storage list error:", listError)
       } else if (objects) {
-        const rawFiles = objects.filter((obj: any) => !obj.name.endsWith("/.keep"))
+        const rawFiles = objects.filter((obj: any) => {
+          const name = obj.name as string
+          const isKeep = name === ".keep" || name.endsWith("/.keep")
+          return !isKeep
+        })
 
         const names = rawFiles.map((obj: any) => obj.name)
         let typeMap: Record<string, string> = {}
@@ -99,5 +103,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
-
 

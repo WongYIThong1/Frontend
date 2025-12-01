@@ -18,7 +18,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           signal: controller.signal,
         })
 
-        if (res.status === 401 || res.status === 403) {
+        if (!res.ok) {
           const redirect =
             typeof window !== 'undefined'
               ? encodeURIComponent(window.location.pathname + window.location.search)
@@ -27,6 +27,17 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           return
         }
       } catch (error) {
+        const isAbortError =
+          error instanceof DOMException
+            ? error.name === 'AbortError'
+            : (error as { name?: string })?.name === 'AbortError' ||
+              (error as { message?: string })?.message === 'component unmounted'
+
+        if (isAbortError) {
+          // 组件卸载触发的中断，不需要打错误日志
+          return
+        }
+
         console.error('AuthGuard session check failed:', error)
       } finally {
         if (isMounted) setIsReady(true)
@@ -56,7 +67,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>
 }
-
 
 
 

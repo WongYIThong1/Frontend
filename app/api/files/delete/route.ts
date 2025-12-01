@@ -88,6 +88,18 @@ export async function DELETE(request: NextRequest) {
       }
     }
 
+    // 同步删除 file_types 中对应记录，避免残留的 type 数据
+    const { error: typeDeleteError } = await supabaseService
+      .from("file_types")
+      .delete()
+      .eq("user_id", userId)
+      .eq("name", sanitizedName)
+
+    if (typeDeleteError) {
+      console.error("Failed to delete file_types entry:", typeDeleteError)
+      // 不影响主流程，只做日志记录
+    }
+
     return NextResponse.json({ message: "File deleted" }, { status: 200 })
   } catch (error) {
     console.error("File delete error:", error)

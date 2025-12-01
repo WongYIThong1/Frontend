@@ -50,6 +50,18 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Failed to rename file" }, { status: 500 })
     }
 
+    // 同步更新 file_types 中的 name，保持 type 不变
+    const { error: typeUpdateError } = await supabaseService
+      .from("file_types")
+      .update({ name: sanitizedNew } as never)
+      .eq("user_id", userId)
+      .eq("name", sanitizedOld)
+
+    if (typeUpdateError) {
+      console.error("file_types rename error:", typeUpdateError)
+      // 不阻塞主流程
+    }
+
     return NextResponse.json({ message: "File renamed" }, { status: 200 })
   } catch (error) {
     console.error("File rename error:", error)
