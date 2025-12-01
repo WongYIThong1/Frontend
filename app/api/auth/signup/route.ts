@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseService } from '@/lib/supabase'
+import { USER_FILES_BUCKET_NAME, getUserObjectPath, getStorageClient } from '@/lib/storage'
 import bcrypt from 'bcryptjs'
 
 type License = {
@@ -103,6 +104,52 @@ export async function POST(request: NextRequest) {
     }
 
     const typedUser = newUser as User
+
+    // 初始化用户存储配额（500MB）与已用空间
+    const initStorageResult = await (supabaseService
+      .from('users')
+      .update({
+        storage_limit_bytes: 500 * 1024 * 1024,
+        storage_used_bytes: 0,
+      } as never)
+      .eq('id', typedUser.id) as unknown as Promise<{ error: Error | null }>)
+
+    if (initStorageResult.error) {
+      // 若初始化配额失败，回滚用户创建
+      await supabaseService.from('users').delete().eq('id', typedUser.id)
+      return NextResponse.json(
+        { error: 'Failed to initialize storage quota', details: initStorageResult.error.message },
+        { status: 500 }
+      )
+    }
+
+    // 在 Storage 中为用户准备前缀（写入一个占位文件）
+    try {
+      const storage = getStorageClient()
+      const placeholderPath = getUserObjectPath(typedUser.id, ".keep")
+      const { error: uploadError } = await storage
+        .from(USER_FILES_BUCKET_NAME)
+        .upload(placeholderPath, new Blob([""], { type: "text/plain" }), {
+          upsert: true,
+        })
+
+      if (uploadError) {
+        // 回滚用户创建与配额设置
+        await supabaseService.from('users').delete().eq('id', typedUser.id)
+        return NextResponse.json(
+          { error: 'Failed to initialize storage for user', details: uploadError.message },
+          { status: 500 }
+        )
+      }
+    } catch (error) {
+      // 回滚用户创建与配额设置
+      await supabaseService.from('users').delete().eq('id', typedUser.id)
+      console.error('Storage init error:', error)
+      return NextResponse.json(
+        { error: 'Failed to initialize storage for user' },
+        { status: 500 }
+      )
+    }
 
     // 更新 license
     const updateLicenseResult = await (supabaseService
