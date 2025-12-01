@@ -119,3 +119,64 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
+export async function DELETE(request: NextRequest) {
+  try {
+    // 从 cookie 中获取 session token
+    const token = request.cookies.get('session_token')?.value
+    const sessionSecret = process.env.SESSION_SECRET
+
+    if (!token || !sessionSecret) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // 验证 JWT token 并提取用户 ID
+    const decoded = verifyJwt(token, sessionSecret)
+    if (!decoded || !decoded.sub) {
+      return NextResponse.json({ error: 'Invalid session token' }, { status: 401 })
+    }
+
+    const userId = decoded.sub as string
+    const { machineId } = await request.json()
+
+    if (!machineId) {
+      return NextResponse.json({ error: 'Machine ID is required' }, { status: 400 })
+    }
+
+    if (!supabaseService) {
+      return NextResponse.json(
+        { error: 'Server misconfigured: missing SUPABASE_SERVICE_ROLE_KEY' },
+        { status: 500 }
+      )
+    }
+
+    // 验证机器属于当前用户
+    const { data: machine, error: fetchError } = await supabaseService
+      .from('machines')
+      .select('id, user_id')
+      .eq('id', machineId)
+      .eq('user_id', userId)
+      .single()
+
+    if (fetchError || !machine) {
+      return NextResponse.json({ error: 'Machine not found or access denied' }, { status: 404 })
+    }
+
+    // 删除机器
+    const { error: deleteError } = await supabaseService
+      .from('machines')
+      .delete()
+      .eq('id', machineId)
+      .eq('user_id', userId)
+
+    if (deleteError) {
+      console.error('Database delete error:', deleteError)
+      return NextResponse.json({ error: 'Failed to delete machine' }, { status: 500 })
+    }
+
+    return NextResponse.json({ message: 'Machine deleted successfully' }, { status: 200 })
+  } catch (error) {
+    console.error('Delete machine error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+

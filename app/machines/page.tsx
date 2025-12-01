@@ -3,12 +3,12 @@
 import { useState, useEffect } from "react"
 import { AuthGuard } from "@/components/auth-guard"
 import { DashboardLayout } from "@/components/dashboard-layout"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Server, Network, Activity, Cpu, Edit2, Check, X } from "lucide-react"
+import { Server, Network, Activity, Cpu, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 interface Machine {
   id: string
@@ -27,9 +27,8 @@ export default function MachinesPage() {
   const [machines, setMachines] = useState<Machine[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState<string>('')
-  const [isSaving, setIsSaving] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -69,62 +68,40 @@ export default function MachinesPage() {
     return machine.name || `Server-${machine.id.substring(0, 8)}`
   }
 
-  const handleStartEdit = (machine: Machine) => {
-    setEditingId(machine.id)
-    setEditName(getServerName(machine))
-  }
-
-  const handleCancelEdit = () => {
-    setEditingId(null)
-    setEditName('')
-  }
-
-  const handleSaveName = async (machineId: string) => {
-    if (!editName.trim()) {
-      toast({
-        title: "Error",
-        description: "Name cannot be empty",
-        variant: "destructive",
-      })
-      return
-    }
-
+  const handleDelete = async (machineId: string) => {
     try {
-      setIsSaving(true)
+      setIsDeleting(true)
       const response = await fetch('/api/machines', {
-        method: 'PATCH',
+        method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({ machineId, name: editName.trim() }),
+        body: JSON.stringify({ machineId }),
       })
 
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error || 'Failed to update name')
+        throw new Error(data.error || 'Failed to delete machine')
       }
 
-      // 更新本地状态
-      setMachines((prev) =>
-        prev.map((m) => (m.id === machineId ? { ...m, name: editName.trim() } : m))
-      )
+      // 从本地状态中移除机器
+      setMachines((prev) => prev.filter((m) => m.id !== machineId))
 
-      setEditingId(null)
-      setEditName('')
+      setDeletingId(null)
       toast({
         title: "Success",
-        description: "Machine name updated successfully",
+        description: "Machine deleted successfully",
       })
     } catch (err) {
-      console.error('Error updating machine name:', err)
+      console.error('Error deleting machine:', err)
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : 'Failed to update machine name',
+        description: err instanceof Error ? err.message : 'Failed to delete machine',
         variant: "destructive",
       })
     } finally {
-      setIsSaving(false)
+      setIsDeleting(false)
     }
   }
 
@@ -166,56 +143,20 @@ export default function MachinesPage() {
                       <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary shrink-0">
                         <Server className="h-4 w-4 text-muted-foreground" />
                       </div>
-                      {editingId === machine.id ? (
-                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                          <Input
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="h-7 text-sm px-2"
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                handleSaveName(machine.id)
-                              } else if (e.key === 'Escape') {
-                                handleCancelEdit()
-                              }
-                            }}
-                            autoFocus
-                          />
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            onClick={() => handleSaveName(machine.id)}
-                            disabled={isSaving}
-                            className="h-7 w-7 shrink-0"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            onClick={handleCancelEdit}
-                            disabled={isSaving}
-                            className="h-7 w-7 shrink-0"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
-                  </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                          <CardTitle className="text-sm text-card-foreground truncate">
-                            {getServerName(machine)}
-                          </CardTitle>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            onClick={() => handleStartEdit(machine)}
-                            className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Edit2 className="h-3 w-3" />
-                          </Button>
-                  </div>
-                      )}
-                </div>
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                        <CardTitle className="text-sm text-card-foreground truncate">
+                          {getServerName(machine)}
+                        </CardTitle>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          onClick={() => setDeletingId(machine.id)}
+                          className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-300"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
                 <Badge
                   className={
                         machine.status === "Active" 
@@ -256,6 +197,37 @@ export default function MachinesPage() {
         </div>
           )}
       </div>
+
+      <Dialog open={deletingId !== null} onOpenChange={(open) => !open && setDeletingId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Delete Machine</DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const machineToDelete = deletingId ? machines.find(m => m.id === deletingId) : null
+                const machineName = machineToDelete ? getServerName(machineToDelete) : 'Unknown Machine'
+                return `Are you sure you want to delete this machine? This action cannot be undone. Machine "${machineName}" will be permanently deleted.`
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeletingId(null)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deletingId && handleDelete(deletingId)}
+              disabled={isDeleting}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
     </AuthGuard>
   )
