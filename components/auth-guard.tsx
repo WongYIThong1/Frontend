@@ -27,18 +27,22 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           return
         }
       } catch (error) {
+        // 检查是否是 AbortError（组件卸载时触发）
         const isAbortError =
-          error instanceof DOMException
-            ? error.name === 'AbortError'
-            : (error as { name?: string })?.name === 'AbortError' ||
-              (error as { message?: string })?.message === 'component unmounted'
+          error instanceof DOMException && error.name === 'AbortError' ||
+          (error as { name?: string })?.name === 'AbortError' ||
+          (error as { message?: string })?.message?.includes('component unmounted') ||
+          (error as { message?: string })?.message?.includes('aborted')
 
         if (isAbortError) {
           // 组件卸载触发的中断，不需要打错误日志
           return
         }
 
-        console.error('AuthGuard session check failed:', error)
+        // 只有在组件仍然挂载时才记录错误
+        if (isMounted) {
+          console.error('AuthGuard session check failed:', error)
+        }
       } finally {
         if (isMounted) setIsReady(true)
       }
