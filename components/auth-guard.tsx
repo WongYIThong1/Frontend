@@ -38,7 +38,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     return () => {
       isMounted = false
       if (!controller.signal.aborted) {
-        controller.abort()
+        controller.abort("component unmounted")
       }
     }
   }, [router])

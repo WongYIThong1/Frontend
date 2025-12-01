@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import { supabaseService } from "@/lib/supabase"
 import { verifyJwt } from "@/lib/auth"
-import { USER_FILES_BUCKET_NAME, getUserObjectPath, getStorageClient } from "@/lib/storage"
+import { USER_FILES_BUCKET_NAME, getUserObjectPath, getStorageClient, sanitizeFileName } from "@/lib/storage"
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50MB 单文件保护，避免极端情况
 
@@ -31,9 +31,14 @@ export async function POST(request: NextRequest) {
 
     const form = await request.formData()
     const file = form.get("file")
+    const type = form.get("type")
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json({ error: "File is required" }, { status: 400 })
+    }
+
+    if (type !== "urls" && type !== "proxies") {
+      return NextResponse.json({ error: "Invalid type. Must be 'urls' or 'proxies'." }, { status: 400 })
     }
 
     const fileSize = file.size
@@ -87,6 +92,7 @@ export async function POST(request: NextRequest) {
     }
 
     const storage = getStorageClient()
+    const safeName = sanitizeFileName(file.name)
     const filePath = getUserObjectPath(userId, file.name)
     const fileBuffer = await file.arrayBuffer()
 
@@ -108,6 +114,15 @@ export async function POST(request: NextRequest) {
     if (updateError) {
       console.error("Failed to update storage_used_bytes:", updateError)
       // 不回滚上传，但提示前端稍后刷新用量
+    }
+
+    // 记录文件类型 (urls / proxies)，方便前端展示
+    const { error: typeError } = await supabaseService
+      .from("file_types")
+      .upsert({ user_id: userId, name: safeName, type } as never)
+
+    if (typeError) {
+      console.error("Failed to upsert file_types:", typeError)
     }
 
     return NextResponse.json(

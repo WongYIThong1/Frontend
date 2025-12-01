@@ -44,6 +44,7 @@ type FileRecord = {
   name: string
   sizeBytes: number
   createdAt: string
+  type?: "urls" | "proxies" | null
   icon: React.ComponentType<{ className?: string }>
 }
 
@@ -63,6 +64,7 @@ export default function FilesPage() {
   const [isDragActive, setIsDragActive] = useState(false)
   const [uploadTotal, setUploadTotal] = useState(0)
   const [uploadDone, setUploadDone] = useState(0)
+  const [uploadType, setUploadType] = useState<"urls" | "proxies">("urls")
   const [actioningFileId, setActioningFileId] = useState<string | null>(null)
   const [isReviewOpen, setIsReviewOpen] = useState(false)
   const [reviewUrl, setReviewUrl] = useState<string | null>(null)
@@ -119,11 +121,15 @@ export default function FilesPage() {
         else if (/\.(log|txt)$/i.test(displayName)) Icon = FolderOpen
         else if (/\.(tar|gz|tgz|zip)$/i.test(displayName)) Icon = Cloud
 
+        const rawType = (file.type as string | undefined) ?? null
+        const normalizedType = rawType === "proxies" ? "proxies" : rawType === "urls" ? "urls" : null
+
         return {
           id: `${index}-${rawName}`,
           name: displayName,
           sizeBytes: typeof file.size === "number" ? file.size : 0,
           createdAt: file.createdAt || "",
+          type: normalizedType,
           icon: Icon,
         }
       })
@@ -179,6 +185,7 @@ export default function FilesPage() {
         const file = txtFiles[i]
         const formData = new FormData()
         formData.append("file", file)
+        formData.append("type", uploadType)
         const res = await fetch("/api/files/upload", {
           method: "POST",
           body: formData,
@@ -500,6 +507,11 @@ export default function FilesPage() {
                           <div>
                             <p className="font-medium text-foreground">{file.name}</p>
                             <p className="text-xs text-muted-foreground">{formatBytes(file.sizeBytes)}</p>
+                            {file.type && (
+                              <span className="mt-1 inline-flex rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                {file.type}
+                              </span>
+                            )}
                           </div>
                         </div>
                         {renderActions(file)}
@@ -522,6 +534,7 @@ export default function FilesPage() {
                     <thead className="text-left text-muted-foreground">
                       <tr className="border-b border-border/60">
                         <th className="py-3 font-medium">Name</th>
+                        <th className="py-3 font-medium">Type</th>
                         <th className="py-3 font-medium">Size</th>
                         <th className="py-3 font-medium">Created</th>
                         <th className="py-3 font-medium text-right">Actions</th>
@@ -540,6 +553,13 @@ export default function FilesPage() {
                                 <p className="text-xs text-muted-foreground">{formatBytes(file.sizeBytes)}</p>
                               </div>
                             </div>
+                          </td>
+                          <td className="py-4">
+                            {file.type ? (
+                              <Badge className="rounded-full px-2 py-0.5 text-xs capitalize">{file.type}</Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </td>
                           <td className="py-4">{formatBytes(file.sizeBytes)}</td>
                           <td className="py-4">{formatDate(file.createdAt)}</td>
@@ -611,6 +631,29 @@ export default function FilesPage() {
             <DialogTitle>Upload files</DialogTitle>
             <DialogDescription>Drag .txt files here, or browse from your device.</DialogDescription>
           </DialogHeader>
+          <div className="mt-1 mb-2 flex items-center justify-between text-xs text-muted-foreground">
+            <span>Type</span>
+            <div className="inline-flex items-center gap-1 rounded-full bg-secondary/40 p-0.5">
+              <button
+                type="button"
+                className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                  uploadType === "urls" ? "bg-primary text-primary-foreground" : "hover:bg-secondary"
+                }`}
+                onClick={() => setUploadType("urls")}
+              >
+                URLs
+              </button>
+              <button
+                type="button"
+                className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                  uploadType === "proxies" ? "bg-primary text-primary-foreground" : "hover:bg-secondary"
+                }`}
+                onClick={() => setUploadType("proxies")}
+              >
+                Proxies
+              </button>
+            </div>
+          </div>
           <div
             className={`mt-4 flex h-48 flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 text-center text-sm transition-all duration-300 ${
               isDragActive

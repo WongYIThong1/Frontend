@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    let files: { name: string; size: number; createdAt: string }[] = []
+    let files: { name: string; size: number; createdAt: string; type?: string | null }[] = []
 
     try {
       const storage = getStorageClient()
@@ -53,13 +53,32 @@ export async function GET(request: NextRequest) {
       if (listError) {
         console.error("Storage list error:", listError)
       } else if (objects) {
-        files = objects
-          .filter((obj: any) => !obj.name.endsWith("/.keep"))
-          .map((obj: any) => ({
-            name: obj.name,
-            size: typeof obj.metadata?.size === "number" ? obj.metadata.size : 0,
-            createdAt: obj.created_at ?? "",
-          }))
+        const rawFiles = objects.filter((obj: any) => !obj.name.endsWith("/.keep"))
+
+        const names = rawFiles.map((obj: any) => obj.name)
+        let typeMap: Record<string, string> = {}
+        try {
+          const { data: typeRows, error: typeError } = await supabaseService
+            .from("file_types")
+            .select("name, type")
+            .eq("user_id", userId)
+            .in("name", names)
+
+          if (typeError) {
+            console.error("file_types query error:", typeError)
+          } else if (typeRows) {
+            typeMap = Object.fromEntries(typeRows.map((row: any) => [row.name, row.type]))
+          }
+        } catch (typeQueryError) {
+          console.error("file_types unexpected error:", typeQueryError)
+        }
+
+        files = rawFiles.map((obj: any) => ({
+          name: obj.name,
+          size: typeof obj.metadata?.size === "number" ? obj.metadata.size : 0,
+          createdAt: obj.created_at ?? "",
+          type: typeMap[obj.name] ?? null,
+        }))
       }
     } catch (error) {
       console.error("Storage list unexpected error:", error)
