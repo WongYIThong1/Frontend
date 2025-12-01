@@ -26,6 +26,13 @@ export default function HomePage() {
           router.replace('/login')
         }
       } catch (error) {
+        const isAbortError =
+          error instanceof DOMException
+            ? error.name === 'AbortError'
+            : (error as { name?: string })?.name === 'AbortError'
+
+        if (isAbortError) return
+
         console.error('Session check failed:', error)
         if (isMounted) router.replace('/login')
       } finally {
@@ -39,7 +46,7 @@ export default function HomePage() {
       isMounted = false
       // 仅在仍未完成时才 abort，避免已完成请求触发 AbortError
       if (!controller.signal.aborted) {
-        controller.abort()
+        controller.abort('component unmounted')
       }
     }
   }, [router])
