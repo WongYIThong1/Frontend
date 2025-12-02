@@ -41,7 +41,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
         // 只有在组件仍然挂载时才记录错误
         if (isMounted) {
-          console.error('AuthGuard session check failed:', error)
+        console.error('AuthGuard session check failed:', error)
         }
       } finally {
         if (isMounted) setIsReady(true)

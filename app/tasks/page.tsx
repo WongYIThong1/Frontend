@@ -43,7 +43,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 
-type TaskStatus = "running" | "pending" | "completed" | "failed"
+type TaskStatus = "running" | "pending" | "completed" | "failed" | "paused"
 
 type MachineOption = {
   id: string
@@ -65,6 +65,7 @@ const statusColorMap: Record<TaskStatus, string> = {
   pending: "bg-amber-500/20 text-amber-400",
   completed: "bg-sky-500/20 text-sky-400",
   failed: "bg-red-500/20 text-red-400",
+  paused: "bg-yellow-500/20 text-yellow-400",
 }
 
 export default function TasksPage() {
@@ -160,7 +161,9 @@ export default function TasksPage() {
       const mapped = apiTasks.map((task) => {
         const status = (task.status as string) || "pending"
         const normalizedStatus: TaskStatus =
-          status === "running" || status === "completed" || status === "failed" ? (status as TaskStatus) : "pending"
+          status === "running" || status === "completed" || status === "failed" || status === "paused"
+            ? (status as TaskStatus)
+            : "pending"
 
         return {
           id: String(task.id),

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 
 import { AuthGuard } from "@/components/auth-guard"
@@ -139,13 +139,14 @@ type TaskDetail = {
   progress: number
 }
 
-const demoRows = [
-  { id: "1294-X8", domain: "example.com", waf: "Cloudflare", database: "MySQL", rows: 1234, status: "Active" },
-  { id: "2294-X8", domain: "foo.bar", waf: "AWS Shield", database: "PostgreSQL", rows: 567, status: "Pending" },
-  { id: "3294-X8", domain: "my-site.cn", waf: "Akamai", database: "Oracle", rows: 980, status: "Running" },
-  { id: "4294-X8", domain: "backup.net", waf: "None", database: "MongoDB", rows: 312, status: "Paused" },
-  { id: "5294-X8", domain: "test-lab.io", waf: "Cloudflare", database: "MariaDB", rows: 845, status: "Active" },
-]
+type TaskUrl = {
+  id: string
+  domains: string | null
+  waf: string | null
+  database: string | null
+  rows: number | null
+  status: string | null
+}
 
 // 模拟图表数据
 const requestsPerMinuteData = [
@@ -177,61 +178,210 @@ export default function TaskDetailPage() {
   const [isActionLoading, setIsActionLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedRows, setSelectedRows] = useState<string[]>([])
+  const [taskUrls, setTaskUrls] = useState<TaskUrl[]>([])
+  const [isLoadingUrls, setIsLoadingUrls] = useState(false)
+  const [taskProgress, setTaskProgress] = useState(0)
+  const [totalDomains, setTotalDomains] = useState(0)
+  const [completedDomains, setCompletedDomains] = useState(0)
   const { toast } = useToast()
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setIsLoading(true)
-        setError(null)
-        const res = await fetch(`/api/tasks?id=${encodeURIComponent(params.id)}`, {
-          credentials: "include",
-        })
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          throw new Error(data.error || "Failed to load task")
-        }
-        const data = await res.json()
-        const t = data.task
-        if (!t) {
-          setError("Task not found")
-          return
-        }
-        const status = (t.status as string) || "pending"
-        const normalizedStatus: TaskStatus =
-          status === "running" || status === "completed" || status === "failed" || status === "paused"
-            ? (status as TaskStatus)
-            : "pending"
+  // 加载 task_url 数据（静默刷新，不显示加载状态）
+  const loadTaskUrls = useCallback(async () => {
+    if (!params.id) return
 
-        setTask({
-          id: String(t.id),
-          name: String(t.name ?? ""),
-          status: normalizedStatus,
-          listFile: t.list_file ? String(t.list_file) : null,
-          thread: typeof t.thread === "number" ? t.thread : 0,
-          worker: typeof t.worker === "number" ? t.worker : 0,
-          timeout: String(t.timeout ?? ""),
-          machineId: t.machine_id ? String(t.machine_id) : null,
-          progress: typeof t.progress === "number" ? t.progress : 0,
-        })
-      } catch (err) {
-        console.error("Task detail fetch error:", err)
-        setError(err instanceof Error ? err.message : "Unable to load task")
-      } finally {
-        setIsLoading(false)
+    try {
+      const res = await fetch(`/api/tasks/${params.id}/urls`, {
+        credentials: "include",
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Failed to load task URLs")
       }
-    }
-
-    if (params.id) {
-      void load()
+      const data = await res.json()
+      setTaskUrls(data.urls || [])
+      // 更新进度和域名统计
+      if (data.progress !== undefined) {
+        setTaskProgress(data.progress)
+      }
+      if (data.totalDomains !== undefined) {
+        setTotalDomains(data.totalDomains)
+      }
+      if (data.completedDomains !== undefined) {
+        setCompletedDomains(data.completedDomains)
+      }
+    } catch (err) {
+      console.error("Load task URLs error:", err)
+      // 静默失败，不显示错误提示
     }
   }, [params.id])
 
+  const loadTask = useCallback(async (options?: { silent?: boolean }) => {
+    if (!params.id) return
+    const silent = options?.silent ?? false
+
+    try {
+      if (!silent) setIsLoading(true)
+      setError(null)
+      const res = await fetch(`/api/tasks?id=${encodeURIComponent(params.id)}`, {
+        credentials: "include",
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Failed to load task")
+      }
+      const data = await res.json()
+      const t = data.task
+      if (!t) {
+        setError("Task not found")
+        return
+      }
+      const status = (t.status as string) || "pending"
+      const normalizedStatus: TaskStatus =
+        status === "running" || status === "completed" || status === "failed" || status === "paused"
+          ? (status as TaskStatus)
+          : "pending"
+
+      setTask({
+        id: String(t.id),
+        name: String(t.name ?? ""),
+        status: normalizedStatus,
+        listFile: t.list_file ? String(t.list_file) : null,
+        thread: typeof t.thread === "number" ? t.thread : 0,
+        worker: typeof t.worker === "number" ? t.worker : 0,
+        timeout: String(t.timeout ?? ""),
+        machineId: t.machine_id ? String(t.machine_id) : null,
+        progress: typeof t.progress === "number" ? t.progress : 0,
+      })
+      
+      // 任务加载后，也加载一次进度数据（如果还没有加载过）
+      // 这样可以确保进度条能显示当前进度，即使任务不是 running 状态
+      if (!silent) {
+        // 延迟一点加载，避免并发请求
+        setTimeout(() => {
+          void loadTaskUrls()
+        }, 100)
+      }
+    } catch (err) {
+      console.error("Task detail fetch error:", err)
+      setError(err instanceof Error ? err.message : "Unable to load task")
+    } finally {
+      if (!silent) setIsLoading(false)
+    }
+  }, [params.id, loadTaskUrls])
+
+  useEffect(() => {
+    void loadTask()
+  }, [loadTask])
+
+  // 轮询检查任务状态（仅在任务运行中或暂停时）- 每60秒检查一次
+  const taskStatusIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  useEffect(() => {
+    // 清除之前的 interval
+    if (taskStatusIntervalRef.current) {
+      clearInterval(taskStatusIntervalRef.current)
+      taskStatusIntervalRef.current = null
+    }
+
+    if (!task || (task.status !== "running" && task.status !== "paused")) {
+      return
+    }
+
+    taskStatusIntervalRef.current = setInterval(() => {
+      void loadTask({ silent: true })
+    }, 60000) // 每60秒检查一次
+
+    return () => {
+      if (taskStatusIntervalRef.current) {
+        clearInterval(taskStatusIntervalRef.current)
+        taskStatusIntervalRef.current = null
+      }
+    }
+  }, [task?.status, loadTask])
+
+  // 初始加载 task_url 数据（显示加载状态）
+  useEffect(() => {
+    const loadInitial = async () => {
+      if (!params.id) return
+
+      try {
+        setIsLoadingUrls(true)
+        await loadTaskUrls()
+      } catch (err) {
+        console.error("Load task URLs error:", err)
+      } finally {
+        setIsLoadingUrls(false)
+      }
+    }
+
+    void loadInitial()
+  }, [params.id, loadTaskUrls])
+
+  // 在任务运行时每30秒从数据库获取一次数据（静默刷新）
+  // 注意：即使任务不是 running 状态，也应该显示当前进度
+  const taskUrlsIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  useEffect(() => {
+    // 清除之前的 interval
+    if (taskUrlsIntervalRef.current) {
+      clearInterval(taskUrlsIntervalRef.current)
+      taskUrlsIntervalRef.current = null
+    }
+
+    if (!params.id || !task) return
+    
+    // 只在任务状态为 running 或 paused 时才自动刷新（因为进度可能会变化）
+    if (task.status !== "running" && task.status !== "paused") {
+      return
+    }
+
+    // 任务状态变为 running 或 paused 时立即加载一次
+    void loadTaskUrls()
+
+    // 然后每30秒刷新一次
+    taskUrlsIntervalRef.current = setInterval(() => {
+      void loadTaskUrls()
+    }, 30000) // 每30秒刷新一次
+
+    return () => {
+      if (taskUrlsIntervalRef.current) {
+        clearInterval(taskUrlsIntervalRef.current)
+        taskUrlsIntervalRef.current = null
+      }
+    }
+  }, [params.id, task?.status, loadTaskUrls])
+
   const progressLabel = useMemo(() => {
-    if (!task) return "0%"
-    const v = Math.max(0, Math.min(100, Math.round(task.progress)))
-    return `${v}%`
-  }, [task])
+    // 优先使用 totalDomains 和 completedDomains 计算进度
+    if (totalDomains > 0) {
+      const percentage = Math.min(100, Math.max(0, Math.round((completedDomains / totalDomains) * 100)))
+      return `${percentage}%`
+    }
+    // 如果没有 totalDomains 数据，使用 taskProgress
+    if (taskProgress > 0) {
+      return `${taskProgress}%`
+    }
+    // 最后回退到任务的 progress 字段
+    if (task) {
+      const v = Math.max(0, Math.min(100, Math.round(task.progress)))
+      return `${v}%`
+    }
+    return "0%"
+  }, [task, totalDomains, completedDomains, taskProgress])
+
+  const progressPercentage = useMemo(() => {
+    // 优先使用 totalDomains 和 completedDomains 计算进度
+    if (totalDomains > 0) {
+      return Math.min(100, Math.max(0, (completedDomains / totalDomains) * 100))
+    }
+    // 如果没有 totalDomains 数据，使用 taskProgress
+    if (taskProgress > 0) {
+      return Math.max(0, Math.min(100, taskProgress))
+    }
+    // 最后回退到任务的 progress 字段
+    if (task) {
+      return Math.max(0, Math.min(100, task.progress))
+    }
+    return 0
+  }, [task, totalDomains, completedDomains, taskProgress])
 
   const handleStart = async () => {
     if (!task) return
@@ -255,6 +405,9 @@ export default function TaskDetailPage() {
       } else {
         setTask({ ...task, status: "running" })
       }
+
+      // 任务启动后立即加载一次进度数据
+      void loadTaskUrls()
 
       toast({
         title: "Task started",
@@ -304,6 +457,48 @@ export default function TaskDetailPage() {
       toast({
         variant: "destructive",
         title: "Failed to pause task",
+        description: err instanceof Error ? err.message : "Please try again.",
+      })
+    } finally {
+      setIsActionLoading(false)
+    }
+  }
+
+  const handleResume = async () => {
+    if (!task) return
+    try {
+      setIsActionLoading(true)
+      const res = await fetch("/api/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id: task.id, status: "running" }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Failed to resume task")
+      }
+
+      const data = await res.json()
+      if (data.task) {
+        setTask({ ...task, status: data.task.status as TaskStatus })
+      } else {
+        setTask({ ...task, status: "running" })
+      }
+
+      // 任务恢复后立即加载一次进度数据
+      void loadTaskUrls()
+
+      toast({
+        title: "Task resumed",
+        description: "The task has been resumed successfully.",
+      })
+    } catch (err) {
+      console.error("Resume task error:", err)
+      toast({
+        variant: "destructive",
+        title: "Failed to resume task",
         description: err instanceof Error ? err.message : "Please try again.",
       })
     } finally {
@@ -401,9 +596,9 @@ export default function TaskDetailPage() {
               </Button>
               <div>
                 <div className="flex items-center gap-3">
-                  <h1 className="text-2xl font-semibold text-foreground">
-                    Task overview
-                  </h1>
+                <h1 className="text-2xl font-semibold text-foreground">
+                  Task overview
+                </h1>
                   {task && (
                     <Badge className={cn("text-xs shrink-0 capitalize px-3 py-1", statusColorMap[task.status])}>
                       {task.status === "running" ? "Running..." : task.status}
@@ -436,6 +631,16 @@ export default function TaskDetailPage() {
                         <Square className="h-4 w-4" />
                       </Button>
                     </>
+                  ) : task.status === "paused" ? (
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 transition-colors duration-200 hover:bg-secondary/40 hover:border-primary/60 hover:text-primary hover:shadow-md hover:animate-pulse-slow"
+                      onClick={handleResume}
+                      disabled={isActionLoading}
+                    >
+                      <Play className="h-4 w-4" />
+                    </Button>
                   ) : (
                     <Button
                       variant="outline"
@@ -501,7 +706,7 @@ export default function TaskDetailPage() {
                       subValue="+12%"
                       data={requestsPerMinuteData.map(d => d.value)}
                       color="#3b82f6"
-                    />
+                            />
                     <ChartCard
                       title="WEBSITES PER MINUTE"
                       value="142"
@@ -519,13 +724,20 @@ export default function TaskDetailPage() {
                           <h2 className="text-base font-semibold text-foreground mb-1">Progress</h2>
                           <p className="text-muted-foreground text-sm">Execution progress</p>
                         </div>
-                        <span className="text-muted-foreground text-sm font-medium">{progressLabel}</span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-muted-foreground text-sm font-medium">{progressLabel}</span>
+                          {totalDomains > 0 && (
+                            <span className="text-xs text-muted-foreground">
+                              {completedDomains.toLocaleString()}/{totalDomains.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
                         <div
                           className="h-2 rounded-full bg-gradient-to-r from-primary via-sky-500 to-emerald-400 transition-all duration-300 relative"
-                          style={{ width: progressLabel }}
+                          style={{ width: `${progressPercentage}%` }}
                         >
                           <div className="absolute inset-0 bg-white/20 animate-pulse" />
                         </div>
@@ -549,9 +761,9 @@ export default function TaskDetailPage() {
                             <div className="flex items-center gap-2 mb-2">
                               <ShieldCheck size={16} className="text-emerald-400" />
                               <span className="text-xs font-medium uppercase text-muted-foreground">Injectable</span>
-                            </div>
+                        </div>
                             <div className="text-2xl font-bold text-foreground">42</div>
-                          </div>
+                      </div>
 
                           <div className="bg-secondary/20 rounded-lg p-4 border border-border/60">
                             <div className="flex items-center gap-2 mb-2">
@@ -559,7 +771,7 @@ export default function TaskDetailPage() {
                               <span className="text-xs font-medium uppercase text-muted-foreground">Not Injectable</span>
                             </div>
                             <div className="text-2xl font-bold text-foreground">128</div>
-                          </div>
+                        </div>
                         </div>
 
                         <div className="bg-secondary/20 rounded-lg p-4 border border-border/60 flex items-center justify-between">
@@ -567,18 +779,18 @@ export default function TaskDetailPage() {
                             <div className="flex items-center gap-2 mb-1">
                               <Database size={16} className="text-primary" />
                               <span className="text-xs font-medium uppercase text-muted-foreground">Total Rows</span>
-                            </div>
+                      </div>
                             <div className="text-xl font-bold text-foreground">3,093</div>
-                          </div>
+                    </div>
                           <div className="h-8 w-24 bg-muted rounded flex items-end gap-1 px-1 pb-1 overflow-hidden">
                             {[40, 70, 50, 90, 60, 80, 40].map((h, i) => (
                               <div key={i} className="flex-1 bg-muted-foreground/30 rounded-sm" style={{ height: `${h}%` }} />
                             ))}
-                          </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </CardContent>
+                </Card>
                 </div>
               </div>
 
@@ -618,10 +830,10 @@ export default function TaskDetailPage() {
                           <th className="py-3 px-4 text-left font-medium">
                             <div className="flex items-center gap-2">
                               <UICheckbox
-                                checked={selectedRows.length === demoRows.length}
+                                checked={taskUrls.length > 0 && selectedRows.length === taskUrls.length}
                                 onCheckedChange={(checked) => {
                                   if (checked) {
-                                    setSelectedRows(demoRows.map((r) => r.id))
+                                    setSelectedRows(taskUrls.map((r) => r.id))
                                   } else {
                                     setSelectedRows([])
                                   }
@@ -638,111 +850,133 @@ export default function TaskDetailPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {demoRows
-                          .filter((row) =>
-                            row.domain.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            row.waf.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            row.database.toLowerCase().includes(searchTerm.toLowerCase())
-                          )
-                          .map((row) => (
-                            <tr
-                              key={row.id}
-                              className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors"
-                            >
-                              <td className="py-3 px-4">
-                                <div className="flex items-center gap-3">
-                                  <UICheckbox
-                                    checked={selectedRows.includes(row.id)}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setSelectedRows([...selectedRows, row.id])
-                                      } else {
-                                        setSelectedRows(selectedRows.filter((id) => id !== row.id))
-                                      }
-                                    }}
-                                  />
-                                  <div className="flex items-center gap-2">
-                                    <Globe2 className="h-4 w-4 text-muted-foreground" />
-                                    <div>
-                                      <span className="font-medium text-foreground">{row.domain}</span>
-                                      <span className="text-xs text-muted-foreground ml-2">(ID: {row.id})</span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center gap-2">
-                                  <Shield className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-foreground">{row.waf}</span>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center gap-2">
-                                  <Database className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-foreground">{row.database}</span>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4 text-right text-foreground">{row.rows.toLocaleString()}</td>
-                              <td className="py-3 px-4 text-right">
-                                <Badge
-                                  className={cn(
-                                    "text-xs",
-                                    row.status === "Active"
-                                      ? "bg-emerald-500/20 text-emerald-400"
-                                      : row.status === "Pending"
-                                        ? "bg-amber-500/20 text-amber-400"
-                                        : row.status === "Running"
-                                          ? "bg-sky-500/20 text-sky-400"
-                                          : "bg-muted text-muted-foreground"
-                                  )}
-                                >
-                                  {row.status}
-                                </Badge>
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                                      <MoreVertical className="h-4 w-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-40">
-                                    <DropdownMenuItem
-                                      className="flex items-center gap-2"
-                                      onClick={() => {
-                                        router.push(`/tasks/${params.id}/database?domain=${encodeURIComponent(row.domain)}`)
-                                      }}
-                                    >
-                                      <Eye className="h-4 w-4" />
-                                      View URL
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="flex items-center gap-2"
-                                      onClick={async () => {
-                                        try {
-                                          // TODO: Implement skip URL API call
-                                          toast({
-                                            title: "URL skipped",
-                                            description: `Skipped ${row.domain}`,
-                                          })
-                                        } catch (err) {
-                                          console.error("Skip URL error:", err)
-                                          toast({
-                                            variant: "destructive",
-                                            title: "Failed to skip URL",
-                                            description: err instanceof Error ? err.message : "Please try again.",
-                                          })
+                        {isLoadingUrls && taskUrls.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                              Loading...
+                            </td>
+                          </tr>
+                        ) : taskUrls.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                              No URLs found
+                            </td>
+                          </tr>
+                        ) : (
+                          taskUrls
+                            .filter((row) => {
+                              const domain = row.domains?.toLowerCase() || ""
+                              const waf = row.waf?.toLowerCase() || ""
+                              const database = row.database?.toLowerCase() || ""
+                              const searchLower = searchTerm.toLowerCase()
+                              return domain.includes(searchLower) || waf.includes(searchLower) || database.includes(searchLower)
+                            })
+                            .map((row) => (
+                              <tr
+                                key={row.id}
+                                className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors"
+                              >
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-3">
+                                    <UICheckbox
+                                      checked={selectedRows.includes(row.id)}
+                                      onCheckedChange={(checked) => {
+                                        if (checked) {
+                                          setSelectedRows([...selectedRows, row.id])
+                                        } else {
+                                          setSelectedRows(selectedRows.filter((id) => id !== row.id))
                                         }
                                       }}
-                                    >
-                                      <SkipForward className="h-4 w-4" />
-                                      Skip URL
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </td>
-                            </tr>
-                          ))}
+                                    />
+                                    <div className="flex items-center gap-2">
+                                      <Globe2 className="h-4 w-4 text-muted-foreground" />
+                                      <div>
+                                        <span className="font-medium text-foreground">{row.domains || "-"}</span>
+                                        <span className="text-xs text-muted-foreground ml-2">(ID: {row.id.slice(0, 8)})</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <Shield className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-foreground">{row.waf || "-"}</span>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <Database className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-foreground">{row.database || "-"}</span>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4 text-right text-foreground">
+                                  {row.rows !== null ? row.rows.toLocaleString() : "-"}
+                                </td>
+                                <td className="py-3 px-4 text-right">
+                                  <Badge
+                                    className={cn(
+                                      "text-xs",
+                                      row.status === "Active" || row.status === "completed"
+                                        ? "bg-emerald-500/20 text-emerald-400"
+                                        : row.status === "Pending" || row.status === "pending"
+                                          ? "bg-amber-500/20 text-amber-400"
+                                          : row.status === "Running" || row.status === "running"
+                                            ? "bg-sky-500/20 text-sky-400"
+                                            : row.status === "Failed" || row.status === "failed"
+                                              ? "bg-red-500/20 text-red-400"
+                                              : "bg-muted text-muted-foreground"
+                                    )}
+                                  >
+                                    {row.status || "-"}
+                                  </Badge>
+                                </td>
+                                <td className="py-3 px-4 text-right">
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-40">
+                                      <DropdownMenuItem
+                                        className="flex items-center gap-2"
+                                        onClick={() => {
+                                          if (row.domains) {
+                                            router.push(`/tasks/${params.id}/database?domain=${encodeURIComponent(row.domains)}`)
+                                          }
+                                        }}
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                        View URL
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        className="flex items-center gap-2"
+                                        onClick={async () => {
+                                          try {
+                                            // TODO: Implement skip URL API call
+                                            toast({
+                                              title: "URL skipped",
+                                              description: `Skipped ${row.domains || "URL"}`,
+                                            })
+                                          } catch (err) {
+                                            console.error("Skip URL error:", err)
+                                            toast({
+                                              variant: "destructive",
+                                              title: "Failed to skip URL",
+                                              description: err instanceof Error ? err.message : "Please try again.",
+                                            })
+                                          }
+                                        }}
+                                      >
+                                        <SkipForward className="h-4 w-4" />
+                                        Skip URL
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </td>
+                              </tr>
+                            ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -786,5 +1020,4 @@ export default function TaskDetailPage() {
     </AuthGuard>
   )
 }
-
 

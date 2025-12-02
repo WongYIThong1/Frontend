@@ -139,20 +139,36 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ task: data }, { status: 200 })
     }
 
-      const { data, error } = await supabaseService
-        .from("tasks")
-        .select(
-          "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, ai_mode, dumper_preset_id, dumper_preset_type, dumper_settings, dumper_thread, dumper_worker, dumper_timeout, dumper_min_rows, status, created_at, updated_at, progress",
-        )
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
+    const { data, error } = await supabaseService
+      .from("tasks")
+      .select(
+          "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, ai_mode, dumper_preset_id, dumper_preset_type, dumper_settings, dumper_thread, dumper_worker, dumper_timeout, dumper_min_rows, status, created_at, updated_at, progress, total_url_lines, current_lines",
+      )
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
 
     if (error) {
       console.error("Fetch tasks error:", error)
       return NextResponse.json({ error: "Failed to load tasks" }, { status: 500 })
     }
 
-    return NextResponse.json({ tasks: data ?? [] }, { status: 200 })
+    // 计算每个任务的进度（基于 total_url_lines 和 current_lines）
+    const tasksWithProgress = (data ?? []).map((task: any) => {
+      let calculatedProgress = task.progress || 0
+      
+      // 如果 total_url_lines 和 current_lines 存在，使用它们计算进度
+      if (task.total_url_lines && task.total_url_lines > 0) {
+        const completed = task.current_lines || 0
+        calculatedProgress = Math.min(100, Math.max(0, Math.round((completed / task.total_url_lines) * 100)))
+      }
+      
+      return {
+        ...task,
+        progress: calculatedProgress,
+      }
+    })
+
+    return NextResponse.json({ tasks: tasksWithProgress }, { status: 200 })
   } catch (error) {
     console.error("Tasks GET unexpected error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -275,6 +291,80 @@ export async function PATCH(request: NextRequest) {
       if (!validStatuses.includes(body.status)) {
         return NextResponse.json({ error: "Invalid status value" }, { status: 400 })
       }
+      
+      // 如果要将任务状态设置为 "running"，需要先检查机器是否在线
+      if (body.status === "running") {
+        // 获取任务的 machine_id
+        const { data: taskData, error: taskError } = await supabaseService
+          .from("tasks")
+          .select("machine_id")
+          .eq("id", cleanId)
+          .eq("user_id", userId)
+          .single()
+
+        if (taskError || !taskData) {
+          return NextResponse.json({ error: "Task not found" }, { status: 404 })
+        }
+
+        const machineId = taskData.machine_id
+
+        // 如果任务有关联的机器，检查机器状态
+        if (machineId) {
+          const { data: machineData, error: machineError } = await supabaseService
+            .from("machines")
+            .select("status, last_heartbeat")
+            .eq("id", machineId)
+            .eq("user_id", userId)
+            .single()
+
+          if (machineError || !machineData) {
+            return NextResponse.json({ error: "Machine not found or access denied" }, { status: 404 })
+          }
+
+          // 检查机器是否在线
+          // 方法1: 检查 status 字段
+          const statusLower = (machineData.status || "").toLowerCase()
+          const isStatusOffline = statusLower === "offline"
+          const isStatusActive = statusLower === "active" || statusLower === "online"
+          
+          // 方法2: 检查 last_heartbeat（如果超过5分钟没有心跳，认为离线）
+          // 注意：如果 last_heartbeat 为 null，且 status 是 Active/Online，则允许（可能是新机器）
+          const lastHeartbeat = machineData.last_heartbeat ? new Date(machineData.last_heartbeat) : null
+          let isHeartbeatStale = false
+          
+          if (lastHeartbeat) {
+            const now = new Date()
+            const heartbeatAge = (now.getTime() - lastHeartbeat.getTime()) / 1000 / 60 // 分钟
+            isHeartbeatStale = heartbeatAge > 5 // 5分钟
+          } else if (!isStatusActive) {
+            // 如果没有心跳且状态不是 Active/Online，认为离线
+            isHeartbeatStale = true
+          }
+          // 如果 last_heartbeat 为 null 但 status 是 Active/Online，允许（可能是新机器还没有心跳）
+
+          // 如果状态是离线，或者心跳过期（即使状态是 Active），都认为离线
+          if (isStatusOffline || isHeartbeatStale) {
+            let errorMessage = "Machine is offline. Please ensure the machine is online before starting the task."
+            if (isStatusOffline) {
+              errorMessage += ` Status: ${machineData.status}`
+            }
+            if (isHeartbeatStale) {
+              if (lastHeartbeat) {
+                const now = new Date()
+                const heartbeatAge = (now.getTime() - lastHeartbeat.getTime()) / 1000 / 60
+                errorMessage += ` Last heartbeat was ${Math.round(heartbeatAge)} minutes ago (threshold: 5 minutes).`
+              } else {
+                errorMessage += ` No heartbeat recorded.`
+              }
+            }
+            return NextResponse.json(
+              { error: errorMessage },
+              { status: 400 }
+            )
+          }
+        }
+      }
+      
       updateData.status = body.status
     }
 
