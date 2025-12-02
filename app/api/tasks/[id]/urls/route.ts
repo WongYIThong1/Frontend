@@ -80,7 +80,7 @@ export async function GET(
       completedDomains = task.current_lines
     } else {
       // 回退：统计所有已完成状态的域名（不区分大小写）
-      completedDomains = taskUrls?.filter(url => {
+      completedDomains = taskUrls?.filter((url: { status?: string | null }) => {
         const status = (url.status || "").toLowerCase()
         return status === "completed"
       }).length || 0
@@ -94,8 +94,8 @@ export async function GET(
     // 但优先使用 task_url 计算的结果
 
     // 计算总行数和已完成行数
-    const totalRows = taskUrls?.reduce((sum, url) => sum + (url.rows ? Number(url.rows) : 0), 0) || 0
-    const completedRows = taskUrls?.reduce((sum, url) => {
+    const totalRows = taskUrls?.reduce((sum: number, url: { rows?: number | string | null }) => sum + (url.rows ? Number(url.rows) : 0), 0) || 0
+    const completedRows = taskUrls?.reduce((sum: number, url: { status?: string | null; rows?: number | string | null }) => {
       if (url.status === "completed" && url.rows) {
         return sum + Number(url.rows)
       }

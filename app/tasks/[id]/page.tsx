@@ -734,7 +734,7 @@ export default function TaskDetailPage() {
                         </div>
                       </div>
 
-                      <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                      <div className="w-full bg-white rounded-full h-2 overflow-hidden">
                         <div
                           className="h-2 rounded-full bg-gradient-to-r from-primary via-sky-500 to-emerald-400 transition-all duration-300 relative"
                           style={{ width: `${progressPercentage}%` }}
