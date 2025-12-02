@@ -12,6 +12,7 @@ type CreateTaskBody = {
   worker?: string | number
   timeout?: string | number
   autoDumper?: boolean
+  aiMode?: boolean
 }
 
 async function getUserIdFromRequest(request: NextRequest): Promise<string | null> {
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest) {
     const proxyFile = body.proxyFile ?? null
     const machineId = body.machineId ?? null
     const autoDumper = Boolean(body.autoDumper)
+    const aiMode = Boolean(body.aiMode)
 
     const threadNum = typeof body.thread === "number" ? body.thread : parseInt(String(body.thread ?? ""), 10)
     const workerNum = typeof body.worker === "number" ? body.worker : parseInt(String(body.worker ?? ""), 10)
@@ -84,6 +86,7 @@ export async function POST(request: NextRequest) {
         worker: workerNum,
         timeout,
         auto_dumper: autoDumper,
+        ai_mode: aiMode,
         status: "pending",
       })
       .select("id, name, status, created_at, updated_at")
@@ -122,7 +125,7 @@ export async function GET(request: NextRequest) {
       const { data, error } = await supabaseService
         .from("tasks")
         .select(
-          "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, dumper_preset_id, dumper_preset_type, dumper_settings, status, created_at, updated_at, progress",
+          "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, ai_mode, dumper_preset_id, dumper_preset_type, dumper_settings, dumper_thread, dumper_worker, dumper_timeout, dumper_min_rows, status, created_at, updated_at, progress",
         )
         .eq("user_id", userId)
         .eq("id", id)
@@ -139,7 +142,7 @@ export async function GET(request: NextRequest) {
       const { data, error } = await supabaseService
         .from("tasks")
         .select(
-          "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, dumper_preset_id, dumper_preset_type, dumper_settings, status, created_at, updated_at, progress",
+          "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, ai_mode, dumper_preset_id, dumper_preset_type, dumper_settings, dumper_thread, dumper_worker, dumper_timeout, dumper_min_rows, status, created_at, updated_at, progress",
         )
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
@@ -184,6 +187,11 @@ export async function PATCH(request: NextRequest) {
       dumperPresetType?: string | null
       dumperSettings?: any
       status?: string
+      dumperThread?: string | number
+      dumperWorker?: string | number
+      dumperTimeout?: string | number
+      dumperMinRows?: string | number
+      aiMode?: boolean
     }
 
     const cleanId = body.id?.trim()
@@ -243,6 +251,10 @@ export async function PATCH(request: NextRequest) {
       updateData.auto_dumper = Boolean(body.autoDumper)
     }
 
+    if (body.aiMode !== undefined) {
+      updateData.ai_mode = Boolean(body.aiMode)
+    }
+
     if (body.dumperPresetId !== undefined) {
       updateData.dumper_preset_id = body.dumperPresetId || null
     }
@@ -266,6 +278,51 @@ export async function PATCH(request: NextRequest) {
       updateData.status = body.status
     }
 
+    // Dumper performance settings
+    if (body.dumperThread !== undefined) {
+      const dumperThreadNum =
+        typeof body.dumperThread === "number"
+          ? body.dumperThread
+          : parseInt(String(body.dumperThread ?? ""), 10)
+      if (!Number.isFinite(dumperThreadNum) || dumperThreadNum <= 0) {
+        return NextResponse.json({ error: "Dumper thread must be a positive number" }, { status: 400 })
+      }
+      updateData.dumper_thread = dumperThreadNum
+    }
+
+    if (body.dumperWorker !== undefined) {
+      const dumperWorkerNum =
+        typeof body.dumperWorker === "number"
+          ? body.dumperWorker
+          : parseInt(String(body.dumperWorker ?? ""), 10)
+      if (!Number.isFinite(dumperWorkerNum) || dumperWorkerNum <= 0) {
+        return NextResponse.json({ error: "Dumper worker must be a positive number" }, { status: 400 })
+      }
+      updateData.dumper_worker = dumperWorkerNum
+    }
+
+    if (body.dumperTimeout !== undefined) {
+      const dumperTimeoutNum =
+        typeof body.dumperTimeout === "number"
+          ? body.dumperTimeout
+          : parseInt(String(body.dumperTimeout ?? ""), 10)
+      if (!Number.isFinite(dumperTimeoutNum) || dumperTimeoutNum <= 0) {
+        return NextResponse.json({ error: "Dumper timeout must be a positive number" }, { status: 400 })
+      }
+      updateData.dumper_timeout = `${dumperTimeoutNum}s`
+    }
+
+    if (body.dumperMinRows !== undefined) {
+      const dumperMinRowsNum =
+        typeof body.dumperMinRows === "number"
+          ? body.dumperMinRows
+          : parseInt(String(body.dumperMinRows ?? ""), 10)
+      if (!Number.isFinite(dumperMinRowsNum) || dumperMinRowsNum <= 0) {
+        return NextResponse.json({ error: "Dumper min rows must be a positive number" }, { status: 400 })
+      }
+      updateData.dumper_min_rows = dumperMinRowsNum
+    }
+
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 })
     }
@@ -275,7 +332,9 @@ export async function PATCH(request: NextRequest) {
       .update(updateData)
       .eq("id", cleanId)
       .eq("user_id", userId)
-      .select("id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, dumper_preset_id, dumper_preset_type, dumper_settings, status, created_at, updated_at, progress")
+      .select(
+        "id, name, list_file, proxy_file, machine_id, thread, worker, timeout, auto_dumper, ai_mode, dumper_preset_id, dumper_preset_type, dumper_settings, dumper_thread, dumper_worker, dumper_timeout, dumper_min_rows, status, created_at, updated_at, progress",
+      )
       .single()
 
     if (error) {

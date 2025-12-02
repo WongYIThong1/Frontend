@@ -81,7 +81,12 @@ export default function TaskSettingsPage() {
   const [thread, setThread] = useState<string>("")
   const [worker, setWorker] = useState<string>("")
   const [timeout, setTimeout] = useState<string>("")
+  const [dumperThread, setDumperThread] = useState<string>("")
+  const [dumperWorker, setDumperWorker] = useState<string>("")
+  const [dumperTimeout, setDumperTimeout] = useState<string>("")
+  const [dumperMinRows, setDumperMinRows] = useState<string>("")
   const [autoDumper, setAutoDumper] = useState(false)
+  const [aiMode, setAiMode] = useState(false)
   const [dumperPreset, setDumperPreset] = useState<string>("")
   const [tables, setTables] = useState<Table[]>([])
   const [presetName, setPresetName] = useState<string>("")
@@ -132,6 +137,23 @@ export default function TaskSettingsPage() {
         const timeoutNum = timeoutStr.replace(/[^\d]/g, "")
         setTimeout(timeoutNum)
         setAutoDumper(task.auto_dumper || false)
+        setAiMode(task.ai_mode || false)
+
+        // Load dumper performance settings if present
+        if (task.dumper_thread != null) {
+          setDumperThread(String(task.dumper_thread))
+        }
+        if (task.dumper_worker != null) {
+          setDumperWorker(String(task.dumper_worker))
+        }
+        if (task.dumper_timeout) {
+          const dumperTimeoutStr = task.dumper_timeout as string
+          const dumperTimeoutNum = dumperTimeoutStr.replace(/[^\d]/g, "")
+          setDumperTimeout(dumperTimeoutNum)
+        }
+        if (task.dumper_min_rows != null) {
+          setDumperMinRows(String(task.dumper_min_rows))
+        }
 
         // Load saved presets from API first (needed to match preset IDs)
         const loadedPresets = await loadSavedPresets()
@@ -501,6 +523,57 @@ export default function TaskSettingsPage() {
         return
       }
 
+      // Dumper performance settings：可选，用户可以在不开 Auto Dumper / AI Mode 的情况下预先配置
+      let dumperThreadNum: number | null = null
+      let dumperWorkerNum: number | null = null
+      let dumperTimeoutNum: number | null = null
+      let dumperMinRowsNum: number | null = null
+
+      const hasAnyDumperValue =
+        dumperThread.trim() !== "" ||
+        dumperWorker.trim() !== "" ||
+        dumperTimeout.trim() !== "" ||
+        dumperMinRows.trim() !== ""
+
+      if (hasAnyDumperValue) {
+        dumperThreadNum = parseInt(dumperThread || "0", 10)
+        dumperWorkerNum = parseInt(dumperWorker || "0", 10)
+        dumperTimeoutNum = parseInt(dumperTimeout || "0", 10)
+        dumperMinRowsNum = parseInt(dumperMinRows || "0", 10)
+
+        if (!Number.isFinite(dumperThreadNum) || dumperThreadNum <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Dumper thread must be a positive number",
+          })
+          return
+        }
+
+        if (!Number.isFinite(dumperWorkerNum) || dumperWorkerNum <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Dumper worker must be a positive number",
+          })
+          return
+        }
+
+        if (!Number.isFinite(dumperTimeoutNum) || dumperTimeoutNum <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Dumper timeout must be a positive number",
+          })
+          return
+        }
+
+        if (!Number.isFinite(dumperMinRowsNum) || dumperMinRowsNum <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Dumper min rows must be a positive number",
+          })
+          return
+        }
+      }
+
       setIsSaving(true)
 
       // Prepare dumper preset data for database
@@ -532,26 +605,37 @@ export default function TaskSettingsPage() {
         dumperSettings = null
       }
 
+      // 构建请求 payload，只有在用户填写了 Dumper Settings 时才下发这些字段
+      const payload: any = {
+        id: params.id,
+        name: name.trim(),
+        listFile: listFile || null,
+        proxyFile: proxyFile || null,
+        machineId: machineId || null,
+        thread: threadNum,
+        worker: workerNum,
+        timeout: timeoutNum,
+        autoDumper: autoDumper,
+        dumperPresetId: dumperPresetId,
+        dumperPresetType: dumperPresetType,
+        dumperSettings: dumperSettings,
+        aiMode: aiMode,
+      }
+
+      if (hasAnyDumperValue) {
+        payload.dumperThread = dumperThreadNum
+        payload.dumperWorker = dumperWorkerNum
+        payload.dumperTimeout = dumperTimeoutNum
+        payload.dumperMinRows = dumperMinRowsNum
+      }
+
       const response = await fetch("/api/tasks", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
         credentials: "include",
-        body: JSON.stringify({
-          id: params.id,
-          name: name.trim(),
-          listFile: listFile || null,
-          proxyFile: proxyFile || null,
-          machineId: machineId || null,
-          thread: threadNum,
-          worker: workerNum,
-          timeout: timeoutNum,
-          autoDumper: autoDumper,
-          dumperPresetId: dumperPresetId,
-          dumperPresetType: dumperPresetType,
-          dumperSettings: dumperSettings,
-        }),
+        body: JSON.stringify(payload),
       })
 
       if (!response.ok) {
@@ -789,6 +873,7 @@ export default function TaskSettingsPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Global performance */}
                     <div className="grid gap-4 sm:grid-cols-3">
                       <div className="space-y-2">
                         <Label htmlFor="task-thread" className="text-sm font-medium">
@@ -854,6 +939,96 @@ export default function TaskSettingsPage() {
                         </Select>
                       </div>
                     </div>
+
+                    {/* Dumper Settings - only meaningful when auto dumper is on, but always visible in this card */}
+                    <div className="space-y-2 pt-2 border-t border-border/60">
+                      <span className="text-sm font-medium">Dumper Settings</span>
+                      <div className="grid gap-4 sm:grid-cols-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="dumper-thread" className="text-xs font-medium">
+                            Thread
+                          </Label>
+                          <Select
+                            value={dumperThread}
+                            onValueChange={setDumperThread}
+                          >
+                            <SelectTrigger id="dumper-thread" className="h-9 text-xs">
+                              <SelectValue placeholder="Thread" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {["50","150","250","500","750","1000","1250","1550","1750","2000","2250","2500","2750","3000"].map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="dumper-worker" className="text-xs font-medium">
+                            Worker
+                          </Label>
+                          <Select
+                            value={dumperWorker}
+                            onValueChange={setDumperWorker}
+                          >
+                            <SelectTrigger id="dumper-worker" className="h-9 text-xs">
+                              <SelectValue placeholder="Worker" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {["5","15","25","35","45","55","65","75","85","95","100"].map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="dumper-timeout" className="text-xs font-medium">
+                            Timeout
+                          </Label>
+                          <Select
+                            value={dumperTimeout ? `${dumperTimeout}s` : ""}
+                            onValueChange={(value) => {
+                              const num = value.replace(/[^\d]/g, "")
+                              setDumperTimeout(num)
+                            }}
+                          >
+                            <SelectTrigger id="dumper-timeout" className="h-9 text-xs">
+                              <SelectValue placeholder="Timeout" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {["15s","25s","35s","45s","55s","60s"].map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="dumper-min-rows" className="text-xs font-medium">
+                            Min Rows
+                          </Label>
+                          <Select
+                            value={dumperMinRows}
+                            onValueChange={setDumperMinRows}
+                          >
+                            <SelectTrigger id="dumper-min-rows" className="h-9 text-xs">
+                              <SelectValue placeholder="Min Rows" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {["10","25","50","100","250","500","1000"].map((value) => (
+                                <SelectItem key={value} value={value}>
+                                  {value}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </div>
@@ -874,6 +1049,24 @@ export default function TaskSettingsPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* AI Mode */}
+                    <div className="flex items-center justify-between rounded-lg border border-border/60 bg-secondary/20 px-4 py-3">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="task-ai-mode" className="text-sm font-medium cursor-pointer">
+                          AI Mode
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Enable AI-assisted dumper behavior
+                        </p>
+                      </div>
+                      <Switch
+                        id="task-ai-mode"
+                        checked={aiMode}
+                        onCheckedChange={setAiMode}
+                      />
+                    </div>
+
+                    {/* Auto Dumper */}
                     <div className="flex items-center justify-between rounded-lg border border-border/60 bg-secondary/20 px-4 py-3">
                       <div className="space-y-0.5">
                         <Label htmlFor="task-auto-dumper" className="text-sm font-medium cursor-pointer">
