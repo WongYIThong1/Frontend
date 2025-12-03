@@ -630,7 +630,6 @@ export default function FilesPage() {
                   )}
                 </div>
               ) : (
-              ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[640px] text-sm">
                     <thead className="text-left text-muted-foreground">
