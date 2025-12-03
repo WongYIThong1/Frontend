@@ -55,7 +55,7 @@ export async function GET(
     // 获取该任务的所有 task_url 记录
     const { data: taskUrls, error: urlsError } = await supabaseService
       .from("task_url")
-      .select("id, domains, waf, database, rows, status, progress")
+      .select("id, domains, waf, links, database, rows, status, progress")
       .eq("task_id", taskId)
       .order("created_at", { ascending: false })
 
@@ -63,6 +63,13 @@ export async function GET(
       console.error("Fetch task URLs error:", urlsError)
       return NextResponse.json({ error: "Failed to load task URLs" }, { status: 500 })
     }
+
+    // 确保 rows 和 links 字段正确转换为数字（bigint/integer 可能返回为字符串）
+    const normalizedUrls = (taskUrls || []).map((url: any) => ({
+      ...url,
+      rows: url.rows !== null && url.rows !== undefined ? Number(url.rows) : null,
+      links: url.links !== null && url.links !== undefined ? Number(url.links) : null,
+    }))
 
     // 计算进度：根据已完成域名数 / 总域名数
     // 必须使用 tasks 表中的 total_url_lines 和 current_lines
@@ -73,17 +80,17 @@ export async function GET(
     // 总域名数：优先使用 tasks.total_url_lines，如果为 0 或 null，则回退到 task_url 表的记录数
     totalDomains = task?.total_url_lines && task.total_url_lines > 0 
       ? task.total_url_lines 
-      : (taskUrls?.length || 0)
+      : ((taskUrls || []).length)
     
     // 已完成域名数：优先使用 tasks.current_lines，如果为 0 或 null，则从 task_url 表统计
     if (task?.current_lines !== null && task?.current_lines !== undefined && task.current_lines >= 0) {
       completedDomains = task.current_lines
     } else {
       // 回退：统计所有已完成状态的域名（不区分大小写）
-      completedDomains = taskUrls?.filter((url: { status?: string | null }) => {
+      completedDomains = normalizedUrls.filter((url: { status?: string | null }) => {
         const status = (url.status || "").toLowerCase()
         return status === "completed"
-      }).length || 0
+      }).length
     }
     
     if (totalDomains > 0) {
@@ -93,17 +100,21 @@ export async function GET(
     // 如果 task_url 表中没有数据，尝试从任务的 progress 字段获取进度
     // 但优先使用 task_url 计算的结果
 
-    // 计算总行数和已完成行数
-    const totalRows = taskUrls?.reduce((sum: number, url: { rows?: number | string | null }) => sum + (url.rows ? Number(url.rows) : 0), 0) || 0
-    const completedRows = taskUrls?.reduce((sum: number, url: { status?: string | null; rows?: number | string | null }) => {
-      if (url.status === "completed" && url.rows) {
+    // 计算总行数和已完成行数（使用标准化后的数据）
+    const totalRows = normalizedUrls.reduce((sum: number, url: { rows?: number | null }) => {
+      return sum + (url.rows !== null && url.rows !== undefined ? Number(url.rows) : 0)
+    }, 0)
+    
+    const completedRows = normalizedUrls.reduce((sum: number, url: { status?: string | null; rows?: number | null }) => {
+      const status = (url.status || "").toLowerCase()
+      if (status === "completed" && url.rows !== null && url.rows !== undefined) {
         return sum + Number(url.rows)
       }
       return sum
-    }, 0) || 0
+    }, 0)
 
     return NextResponse.json({ 
-      urls: taskUrls ?? [],
+      urls: normalizedUrls,
       progress: Math.min(100, Math.max(0, progress)),
       totalDomains,
       completedDomains,

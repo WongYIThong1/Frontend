@@ -76,6 +76,7 @@ export default function FilesPage() {
   const [deleteTarget, setDeleteTarget] = useState<FileRecord | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("list")
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [flippedCards, setFlippedCards] = useState<Set<string>>(new Set())
 
   const filteredFiles = useMemo(() => {
     return files.filter((file) => file.name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -405,6 +406,14 @@ export default function FilesPage() {
     )
   }
 
+  const toggleFlip = (id: string) => {
+    setFlippedCards((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
   return (
     <AuthGuard>
       <DashboardLayout>
@@ -495,30 +504,122 @@ export default function FilesPage() {
               ) : viewMode === "grid" ? (
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {filteredFiles.map((file) => (
-                    <div
-                      key={file.id}
-                      className="rounded-xl border border-border/60 bg-secondary/20 p-4 transition hover:border-primary/40"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/70">
-                            <file.icon className="h-5 w-5 text-muted-foreground" />
+                    <div key={file.id} className="h-full [perspective:1200px]">
+                      <div
+                        className={`relative h-full transition-transform duration-500 [transform-style:preserve-3d] ${
+                          flippedCards.has(file.id) ? "[transform:rotateY(180deg)]" : ""
+                        }`}
+                      >
+                        <div className="absolute inset-0 rounded-xl border border-border/60 bg-secondary/20 p-4 transition hover:border-primary/40 [backface-visibility:hidden]">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/70">
+                                <file.icon className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-foreground">{file.name}</p>
+                                <p className="text-xs text-muted-foreground">{formatBytes(file.sizeBytes)}</p>
+                                {file.type && (
+                                  <span className="mt-1 inline-flex rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                    {file.type}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                toggleFlip(file.id)
+                              }}
+                              title="Flip card to see actions"
+                              aria-label="Flip card to see actions"
+                            >
+                              <RefreshCcw className="h-4 w-4" />
+                            </Button>
                           </div>
-                          <div>
-                            <p className="font-medium text-foreground">{file.name}</p>
-                            <p className="text-xs text-muted-foreground">{formatBytes(file.sizeBytes)}</p>
-                            {file.type && (
-                              <span className="mt-1 inline-flex rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                {file.type}
-                              </span>
-                            )}
+                          <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+                            <span>Created | {formatDate(file.createdAt)}</span>
+                            <span>Size | {formatBytes(file.sizeBytes)}</span>
                           </div>
                         </div>
-                        {renderActions(file)}
-                      </div>
-                      <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                        <p>Created · {formatDate(file.createdAt)}</p>
-                        <p>Size · {formatBytes(file.sizeBytes)}</p>
+
+                        <div className="absolute inset-0 rounded-xl border border-border/60 bg-gradient-to-br from-secondary/40 to-primary/5 p-4 [backface-visibility:hidden] [transform:rotateY(180deg)]">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">{file.name}</p>
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-primary">Quick actions</p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                toggleFlip(file.id)
+                              }}
+                              title="Flip back"
+                              aria-label="Flip back"
+                            >
+                              <RefreshCcw className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="mt-4 space-y-2 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground">Type</span>
+                              <Badge className="rounded-full px-2 py-0.5 text-[11px] capitalize">
+                                {file.type || "unknown"}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between text-muted-foreground">
+                              <span>Created</span>
+                              <span>{formatDate(file.createdAt)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-muted-foreground">
+                              <span>Size</span>
+                              <span>{formatBytes(file.sizeBytes)}</span>
+                            </div>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void handleReview(file)
+                              }}
+                              disabled={actioningFileId === file.id}
+                            >
+                              Preview
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setRenameTarget(file)
+                                const base = file.name.replace(/\.txt$/i, "")
+                                setRenameValue(base)
+                              }}
+                              disabled={actioningFileId === file.id}
+                            >
+                              Rename
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setDeleteTarget(file)
+                              }}
+                              disabled={actioningFileId === file.id}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -528,6 +629,7 @@ export default function FilesPage() {
                     </div>
                   )}
                 </div>
+              ) : (
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[640px] text-sm">
@@ -750,5 +852,4 @@ export default function FilesPage() {
     </AuthGuard>
   )
 }
-
 

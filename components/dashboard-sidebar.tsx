@@ -62,20 +62,38 @@ export function DashboardSidebar() {
         credentials: "include",
       })
 
+      // 检查是否是网络错误
+      if (!response) {
+        setNotificationsError("Network error: Unable to connect to server")
+        return
+      }
+
       if (!response.ok) {
         if (response.status === 401) {
           setNotifications([])
           setNotificationsError("Please log in again to view notifications.")
           return
         }
-        throw new Error("Failed to fetch notifications")
+        
+        let errorMessage = "Failed to fetch notifications"
+        try {
+          const data = await response.json()
+          errorMessage = data.error || errorMessage
+        } catch {
+          errorMessage = `Failed to fetch notifications (${response.status})`
+        }
+        throw new Error(errorMessage)
       }
 
       const data = await response.json()
       setNotifications(data.notifications || [])
     } catch (error) {
       console.error("Notifications fetch error:", error)
-      setNotificationsError("Unable to load notifications.")
+      if (error instanceof TypeError && error.message === "Failed to fetch") {
+        setNotificationsError("Network error: Unable to connect to server")
+      } else {
+        setNotificationsError(error instanceof Error ? error.message : "Unable to load notifications.")
+      }
     } finally {
       setIsLoadingNotifications(false)
     }

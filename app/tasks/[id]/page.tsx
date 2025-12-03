@@ -43,13 +43,15 @@ import {
   Square,
   Eye,
   SkipForward,
+  Link2,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Checkbox as UICheckbox } from "@/components/ui/checkbox"
 
 interface ChartCardProps {
   title: string
@@ -143,10 +145,13 @@ type TaskUrl = {
   id: string
   domains: string | null
   waf: string | null
+  links: number | null
   database: string | null
   rows: number | null
   status: string | null
 }
+
+const ROWS_PER_PAGE = 25
 
 // 模拟图表数据
 const requestsPerMinuteData = [
@@ -177,13 +182,166 @@ export default function TaskDetailPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isActionLoading, setIsActionLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedRows, setSelectedRows] = useState<string[]>([])
   const [taskUrls, setTaskUrls] = useState<TaskUrl[]>([])
   const [isLoadingUrls, setIsLoadingUrls] = useState(false)
   const [taskProgress, setTaskProgress] = useState(0)
   const [totalDomains, setTotalDomains] = useState(0)
   const [completedDomains, setCompletedDomains] = useState(0)
+  const [sortColumn, setSortColumn] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
+  const [currentPage, setCurrentPage] = useState(1)
   const { toast } = useToast()
+
+  // 处理列排序
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      // 如果点击同一列，切换排序方向
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+    } else {
+      // 如果点击不同列，设置新列并默认升序
+      setSortColumn(column)
+      setSortDirection("asc")
+    }
+  }
+
+  // 获取排序后的数据
+  const getSortedData = useMemo(() => {
+    let sorted = [...taskUrls]
+
+    // 应用搜索过滤
+    sorted = sorted.filter((row) => {
+      const domain = row.domains?.toLowerCase() || ""
+      const waf = row.waf?.toLowerCase() || ""
+      const database = row.database?.toLowerCase() || ""
+      const searchLower = searchTerm.toLowerCase()
+      return domain.includes(searchLower) || waf.includes(searchLower) || database.includes(searchLower)
+    })
+
+    // 应用排序
+    if (sortColumn) {
+      // 状态排序顺序（运行中的优先）
+      const statusOrder: Record<string, number> = {
+        running: 0,
+        pending: 1,
+        paused: 2,
+        completed: 3,
+        failed: 4,
+      }
+
+      sorted.sort((a, b) => {
+        let aPrimary: any
+        let bPrimary: any
+        let aSecondary: any
+        let bSecondary: any
+
+        switch (sortColumn) {
+          case "domains":
+            // DOMAINS: 按域名分组，相同域名的行在一起
+            aPrimary = (a.domains || "").toLowerCase()
+            bPrimary = (b.domains || "").toLowerCase()
+            // 次要排序：按状态（运行中的优先）
+            aSecondary = statusOrder[(a.status || "").toLowerCase()] ?? 99
+            bSecondary = statusOrder[(b.status || "").toLowerCase()] ?? 99
+            break
+          case "waf":
+            // WAF: 按 WAF 值分组，相同 WAF 的行在一起（如所有 cloudflare 在一起）
+            aPrimary = (a.waf || "").toLowerCase()
+            bPrimary = (b.waf || "").toLowerCase()
+            // 次要排序：在相同 WAF 组内，按 links 数量排序（从大到小）
+            aSecondary = a.links ?? -1 // null 值用 -1 表示，放在最后
+            bSecondary = b.links ?? -1
+            break
+          case "links":
+            // LINKS: 按 links 数量排序，处理 null 值
+            const aLinks = a.links ?? null
+            const bLinks = b.links ?? null
+            
+            if (sortDirection === "desc") {
+              // 降序：从大到小到无（null 值放在最后）
+              if (aLinks === null && bLinks === null) return 0
+              if (aLinks === null) return 1 // a 是 null，放在后面
+              if (bLinks === null) return -1 // b 是 null，放在后面
+              aPrimary = aLinks
+              bPrimary = bLinks
+            } else {
+              // 升序：从无到小到大（null 值放在最前）
+              if (aLinks === null && bLinks === null) return 0
+              if (aLinks === null) return -1 // a 是 null，放在前面
+              if (bLinks === null) return 1 // b 是 null，放在前面
+              aPrimary = aLinks
+              bPrimary = bLinks
+            }
+            // 次要排序：按状态（运行中的优先）
+            aSecondary = statusOrder[(a.status || "").toLowerCase()] ?? 99
+            bSecondary = statusOrder[(b.status || "").toLowerCase()] ?? 99
+            break
+          case "database":
+            // DATABASE: 按 database 值分组，相同 database 的行在一起
+            aPrimary = (a.database || "").toLowerCase()
+            bPrimary = (b.database || "").toLowerCase()
+            // 次要排序：按 links 数量排序（从大到小）
+            aSecondary = a.links ?? -1
+            bSecondary = b.links ?? -1
+            break
+          case "rows":
+            // ROWS: 按 rows 数量排序
+            aPrimary = a.rows ?? 0
+            bPrimary = b.rows ?? 0
+            // 次要排序：按状态（运行中的优先）
+            aSecondary = statusOrder[(a.status || "").toLowerCase()] ?? 99
+            bSecondary = statusOrder[(b.status || "").toLowerCase()] ?? 99
+            break
+          case "status":
+            // STATUS: 按状态分组
+            aPrimary = statusOrder[(a.status || "").toLowerCase()] ?? 99
+            bPrimary = statusOrder[(b.status || "").toLowerCase()] ?? 99
+            // 次要排序：按 links 数量排序（从大到小）
+            aSecondary = a.links ?? -1
+            bSecondary = b.links ?? -1
+            break
+          default:
+            return 0
+        }
+
+        // 主要排序比较
+        if (aPrimary < bPrimary) {
+          return sortDirection === "asc" ? -1 : 1
+        }
+        if (aPrimary > bPrimary) {
+          return sortDirection === "asc" ? 1 : -1
+        }
+        
+        // 如果主要值相同，使用次要排序（总是按升序，运行中的优先）
+        if (aSecondary !== undefined && bSecondary !== undefined) {
+          if (aSecondary < bSecondary) return -1
+          if (aSecondary > bSecondary) return 1
+        }
+        
+        return 0
+      })
+    }
+
+    return sorted
+  }, [taskUrls, searchTerm, sortColumn, sortDirection])
+
+  const totalEntries = getSortedData.length
+  const totalPages = Math.max(1, Math.ceil(totalEntries / ROWS_PER_PAGE))
+
+  const paginatedData = useMemo(() => {
+    const startIndex = (currentPage - 1) * ROWS_PER_PAGE
+    return getSortedData.slice(startIndex, startIndex + ROWS_PER_PAGE)
+  }, [getSortedData, currentPage])
+
+  const pageRangeStart = totalEntries === 0 ? 0 : (currentPage - 1) * ROWS_PER_PAGE + 1
+  const pageRangeEnd = totalEntries === 0 ? 0 : Math.min(pageRangeStart + ROWS_PER_PAGE - 1, totalEntries)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, sortColumn, sortDirection])
+
+  useEffect(() => {
+    setCurrentPage((prev) => Math.min(prev, totalPages))
+  }, [totalPages])
 
   // 加载 task_url 数据（静默刷新，不显示加载状态）
   const loadTaskUrls = useCallback(async () => {
@@ -221,37 +379,37 @@ export default function TaskDetailPage() {
 
     try {
       if (!silent) setIsLoading(true)
-      setError(null)
-      const res = await fetch(`/api/tasks?id=${encodeURIComponent(params.id)}`, {
-        credentials: "include",
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || "Failed to load task")
-      }
-      const data = await res.json()
-      const t = data.task
-      if (!t) {
-        setError("Task not found")
-        return
-      }
-      const status = (t.status as string) || "pending"
-      const normalizedStatus: TaskStatus =
+        setError(null)
+        const res = await fetch(`/api/tasks?id=${encodeURIComponent(params.id)}`, {
+          credentials: "include",
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || "Failed to load task")
+        }
+        const data = await res.json()
+        const t = data.task
+        if (!t) {
+          setError("Task not found")
+          return
+        }
+        const status = (t.status as string) || "pending"
+        const normalizedStatus: TaskStatus =
         status === "running" || status === "completed" || status === "failed" || status === "paused"
-          ? (status as TaskStatus)
-          : "pending"
+            ? (status as TaskStatus)
+            : "pending"
 
-      setTask({
-        id: String(t.id),
-        name: String(t.name ?? ""),
-        status: normalizedStatus,
-        listFile: t.list_file ? String(t.list_file) : null,
-        thread: typeof t.thread === "number" ? t.thread : 0,
-        worker: typeof t.worker === "number" ? t.worker : 0,
-        timeout: String(t.timeout ?? ""),
-        machineId: t.machine_id ? String(t.machine_id) : null,
-        progress: typeof t.progress === "number" ? t.progress : 0,
-      })
+        setTask({
+          id: String(t.id),
+          name: String(t.name ?? ""),
+          status: normalizedStatus,
+          listFile: t.list_file ? String(t.list_file) : null,
+          thread: typeof t.thread === "number" ? t.thread : 0,
+          worker: typeof t.worker === "number" ? t.worker : 0,
+          timeout: String(t.timeout ?? ""),
+          machineId: t.machine_id ? String(t.machine_id) : null,
+          progress: typeof t.progress === "number" ? t.progress : 0,
+        })
       
       // 任务加载后，也加载一次进度数据（如果还没有加载过）
       // 这样可以确保进度条能显示当前进度，即使任务不是 running 状态
@@ -261,12 +419,12 @@ export default function TaskDetailPage() {
           void loadTaskUrls()
         }, 100)
       }
-    } catch (err) {
-      console.error("Task detail fetch error:", err)
-      setError(err instanceof Error ? err.message : "Unable to load task")
-    } finally {
+      } catch (err) {
+        console.error("Task detail fetch error:", err)
+        setError(err instanceof Error ? err.message : "Unable to load task")
+      } finally {
       if (!silent) setIsLoading(false)
-    }
+      }
   }, [params.id, loadTaskUrls])
 
   useEffect(() => {
@@ -361,8 +519,8 @@ export default function TaskDetailPage() {
     }
     // 最后回退到任务的 progress 字段
     if (task) {
-      const v = Math.max(0, Math.min(100, Math.round(task.progress)))
-      return `${v}%`
+    const v = Math.max(0, Math.min(100, Math.round(task.progress)))
+    return `${v}%`
     }
     return "0%"
   }, [task, totalDomains, completedDomains, taskProgress])
@@ -599,11 +757,11 @@ export default function TaskDetailPage() {
                 <h1 className="text-2xl font-semibold text-foreground">
                   Task overview
                 </h1>
-                  {task && (
-                    <Badge className={cn("text-xs shrink-0 capitalize px-3 py-1", statusColorMap[task.status])}>
-                      {task.status === "running" ? "Running..." : task.status}
-                    </Badge>
-                  )}
+              {task && (
+                <Badge className={cn("text-xs shrink-0 capitalize px-3 py-1", statusColorMap[task.status])}>
+                  {task.status === "running" ? "Running..." : task.status}
+                </Badge>
+              )}
                 </div>
               </div>
             </div>
@@ -612,13 +770,13 @@ export default function TaskDetailPage() {
                 <>
                   {task.status === "running" ? (
                     <>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8 transition-colors duration-200 hover:bg-secondary/40 hover:border-primary/60 hover:text-primary hover:shadow-md hover:animate-pulse-slow"
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 transition-colors duration-200 hover:bg-secondary/40 hover:border-primary/60 hover:text-primary hover:shadow-md hover:animate-pulse-slow"
                         onClick={handlePause}
                         disabled={isActionLoading}
-                      >
+              >
                         <Pause className="h-4 w-4" />
                       </Button>
                       <Button
@@ -713,12 +871,12 @@ export default function TaskDetailPage() {
                       subValue="+5%"
                       data={websitesPerMinuteData.map(d => d.value)}
                       color="#10b981"
-                    />
+                            />
                   </div>
 
                   {/* Progress Card */}
                   <Card className="border-border/70 bg-card/80 rounded-xl">
-                    <CardContent className="p-6">
+                    <CardContent className="px-4 pb-4">
                       <div className="flex justify-between items-end mb-4">
                         <div>
                           <h2 className="text-base font-semibold text-foreground mb-1">Progress</h2>
@@ -731,16 +889,14 @@ export default function TaskDetailPage() {
                               {completedDomains.toLocaleString()}/{totalDomains.toLocaleString()}
                             </span>
                           )}
-                        </div>
+                  </div>
                       </div>
 
-                      <div className="w-full bg-white rounded-full h-2 overflow-hidden">
+                      <div className="h-1.5 w-full rounded-full bg-muted">
                         <div
-                          className="h-2 rounded-full bg-gradient-to-r from-primary via-sky-500 to-emerald-400 transition-all duration-300 relative"
+                          className="h-1.5 rounded-full bg-white transition-all"
                           style={{ width: `${progressPercentage}%` }}
-                        >
-                          <div className="absolute inset-0 bg-white/20 animate-pulse" />
-                        </div>
+                        />
                       </div>
                     </CardContent>
                   </Card>
@@ -753,7 +909,7 @@ export default function TaskDetailPage() {
                       <div className="mb-6">
                         <h2 className="text-base font-semibold text-foreground">Overview</h2>
                         <p className="text-muted-foreground text-sm">Task statistics summary</p>
-                      </div>
+                        </div>
 
                       <div className="flex-1 flex flex-col gap-4 justify-center">
                         <div className="grid grid-cols-2 gap-3">
@@ -769,10 +925,10 @@ export default function TaskDetailPage() {
                             <div className="flex items-center gap-2 mb-2">
                               <ShieldAlert size={16} className="text-red-400" />
                               <span className="text-xs font-medium uppercase text-muted-foreground">Not Injectable</span>
-                            </div>
+                        </div>
                             <div className="text-2xl font-bold text-foreground">128</div>
-                        </div>
-                        </div>
+                      </div>
+                    </div>
 
                         <div className="bg-secondary/20 rounded-lg p-4 border border-border/60 flex items-center justify-between">
                           <div>
@@ -781,7 +937,7 @@ export default function TaskDetailPage() {
                               <span className="text-xs font-medium uppercase text-muted-foreground">Total Rows</span>
                       </div>
                             <div className="text-xl font-bold text-foreground">3,093</div>
-                    </div>
+                      </div>
                           <div className="h-8 w-24 bg-muted rounded flex items-end gap-1 px-1 pb-1 overflow-hidden">
                             {[40, 70, 50, 90, 60, 80, 40].map((h, i) => (
                               <div key={i} className="flex-1 bg-muted-foreground/30 rounded-sm" style={{ height: `${h}%` }} />
@@ -828,114 +984,182 @@ export default function TaskDetailPage() {
                       <thead className="border-b border-border/60 text-xs text-muted-foreground">
                         <tr>
                           <th className="py-3 px-4 text-left font-medium">
-                            <div className="flex items-center gap-2">
-                              <UICheckbox
-                                checked={taskUrls.length > 0 && selectedRows.length === taskUrls.length}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedRows(taskUrls.map((r) => r.id))
-                                  } else {
-                                    setSelectedRows([])
-                                  }
-                                }}
+                            <button
+                              onClick={() => handleSort("domains")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors"
+                            >
+                              DOMAINS
+                              <div className="relative h-3 w-3 flex items-center justify-center">
+                                <ArrowUp
+                                  className={`h-3 w-3 absolute will-change-[transform,opacity] transition-[transform,opacity] duration-500 ease-out ${
+                                    sortColumn === "domains" && sortDirection === "asc"
+                                      ? "opacity-100 scale-100 rotate-0"
+                                      : "opacity-30 scale-75 rotate-180"
+                                  }`}
                               />
-                              <span>DOMAINS</span>
                             </div>
+                            </button>
                           </th>
-                          <th className="py-3 px-4 text-left font-medium">WAF</th>
-                          <th className="py-3 px-4 text-left font-medium">DATABASE</th>
-                          <th className="py-3 px-4 text-right font-medium">ROWS</th>
-                          <th className="py-3 px-4 text-right font-medium">STATUS</th>
+                          <th className="py-3 px-4 text-left font-medium">
+                            <button
+                              onClick={() => handleSort("waf")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors"
+                            >
+                              WAF
+                              <div className="relative h-3 w-3 flex items-center justify-center">
+                                <ArrowUp
+                                  className={`h-3 w-3 absolute will-change-[transform,opacity] transition-[transform,opacity] duration-500 ease-out ${
+                                    sortColumn === "waf" && sortDirection === "asc"
+                                      ? "opacity-100 scale-100 rotate-0"
+                                      : "opacity-30 scale-75 rotate-180"
+                                  }`}
+                                />
+                              </div>
+                            </button>
+                          </th>
+                          <th className="py-3 px-4 text-left font-medium">
+                            <button
+                              onClick={() => handleSort("links")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors"
+                            >
+                              LINKS
+                              <div className="relative h-3 w-3 flex items-center justify-center">
+                                <ArrowUp
+                                  className={`h-3 w-3 absolute will-change-[transform,opacity] transition-[transform,opacity] duration-500 ease-out ${
+                                    sortColumn === "links" && sortDirection === "asc"
+                                      ? "opacity-100 scale-100 rotate-0"
+                                      : "opacity-30 scale-75 rotate-180"
+                                  }`}
+                                />
+                              </div>
+                            </button>
+                          </th>
+                          <th className="py-3 px-4 text-left font-medium">
+                            <button
+                              onClick={() => handleSort("database")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors"
+                            >
+                              DATABASE
+                              <div className="relative h-3 w-3 flex items-center justify-center">
+                                <ArrowUp
+                                  className={`h-3 w-3 absolute will-change-[transform,opacity] transition-[transform,opacity] duration-500 ease-out ${
+                                    sortColumn === "database" && sortDirection === "asc"
+                                      ? "opacity-100 scale-100 rotate-0"
+                                      : "opacity-30 scale-75 rotate-180"
+                                  }`}
+                                />
+                              </div>
+                            </button>
+                          </th>
+                          <th className="py-3 px-4 text-right font-medium">
+                            <button
+                              onClick={() => handleSort("rows")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors ml-auto w-fit"
+                            >
+                              ROWS
+                              <div className="relative h-3 w-3 flex items-center justify-center">
+                                <ArrowUp
+                                  className={`h-3 w-3 absolute will-change-[transform,opacity] transition-[transform,opacity] duration-500 ease-out ${
+                                    sortColumn === "rows" && sortDirection === "asc"
+                                      ? "opacity-100 scale-100 rotate-0"
+                                      : "opacity-30 scale-75 rotate-180"
+                                  }`}
+                                />
+                              </div>
+                            </button>
+                          </th>
+                          <th className="py-3 px-4 text-right font-medium">
+                            <button
+                              onClick={() => handleSort("status")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors ml-auto w-fit"
+                            >
+                              STATUS
+                              <div className="relative h-3 w-3 flex items-center justify-center">
+                                <ArrowUp
+                                  className={`h-3 w-3 absolute will-change-[transform,opacity] transition-[transform,opacity] duration-500 ease-out ${
+                                    sortColumn === "status" && sortDirection === "asc"
+                                      ? "opacity-100 scale-100 rotate-0"
+                                      : "opacity-30 scale-75 rotate-180"
+                                  }`}
+                                />
+                              </div>
+                            </button>
+                          </th>
                           <th className="py-3 px-4 text-right font-medium w-10"></th>
                         </tr>
                       </thead>
                       <tbody>
                         {isLoadingUrls && taskUrls.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                            <td colSpan={7} className="py-8 text-center text-muted-foreground">
                               Loading...
                             </td>
                           </tr>
-                        ) : taskUrls.length === 0 ? (
+                        ) : getSortedData.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                            <td colSpan={7} className="py-8 text-center text-muted-foreground">
                               No URLs found
                             </td>
                           </tr>
                         ) : (
-                          taskUrls
-                            .filter((row) => {
-                              const domain = row.domains?.toLowerCase() || ""
-                              const waf = row.waf?.toLowerCase() || ""
-                              const database = row.database?.toLowerCase() || ""
-                              const searchLower = searchTerm.toLowerCase()
-                              return domain.includes(searchLower) || waf.includes(searchLower) || database.includes(searchLower)
-                            })
-                            .map((row) => (
-                              <tr
-                                key={row.id}
-                                className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors"
-                              >
-                                <td className="py-3 px-4">
-                                  <div className="flex items-center gap-3">
-                                    <UICheckbox
-                                      checked={selectedRows.includes(row.id)}
-                                      onCheckedChange={(checked) => {
-                                        if (checked) {
-                                          setSelectedRows([...selectedRows, row.id])
-                                        } else {
-                                          setSelectedRows(selectedRows.filter((id) => id !== row.id))
-                                        }
-                                      }}
-                                    />
-                                    <div className="flex items-center gap-2">
-                                      <Globe2 className="h-4 w-4 text-muted-foreground" />
-                                      <div>
-                                        <span className="font-medium text-foreground">{row.domains || "-"}</span>
-                                        <span className="text-xs text-muted-foreground ml-2">(ID: {row.id.slice(0, 8)})</span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </td>
+                          paginatedData.map((row) => (
+                            <tr
+                              key={row.id}
+                              className="border-b border-border/40 last:border-0 hover:bg-secondary/20 transition-colors"
+                            >
                                 <td className="py-3 px-4">
                                   <div className="flex items-center gap-2">
-                                    <Shield className="h-4 w-4 text-muted-foreground" />
+                                    <Globe2 className="h-4 w-4 text-muted-foreground" />
+                                    <span className="font-medium text-foreground">{row.domains || "-"}</span>
+                                </div>
+                              </td>
+                                <td className="py-3 px-4">
+                                <div className="flex items-center gap-2">
+                                  <Shield className="h-4 w-4 text-muted-foreground" />
                                     <span className="text-foreground">{row.waf || "-"}</span>
+                                </div>
+                              </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-2">
+                                    <Link2 className="h-4 w-4 text-muted-foreground" />
+                                    <span className="text-foreground">
+                                      {row.links !== null && row.links !== undefined ? row.links.toLocaleString() : "-"}
+                                    </span>
                                   </div>
                                 </td>
                                 <td className="py-3 px-4">
-                                  <div className="flex items-center gap-2">
-                                    <Database className="h-4 w-4 text-muted-foreground" />
+                                <div className="flex items-center gap-2">
+                                  <Database className="h-4 w-4 text-muted-foreground" />
                                     <span className="text-foreground">{row.database || "-"}</span>
-                                  </div>
-                                </td>
+                                </div>
+                              </td>
                                 <td className="py-3 px-4 text-right text-foreground">
                                   {row.rows !== null ? row.rows.toLocaleString() : "-"}
                                 </td>
                                 <td className="py-3 px-4 text-right">
-                                  <Badge
-                                    className={cn(
-                                      "text-xs",
+                                <Badge
+                                  className={cn(
+                                    "text-xs",
                                       row.status === "Active" || row.status === "completed"
-                                        ? "bg-emerald-500/20 text-emerald-400"
+                                      ? "bg-emerald-500/20 text-emerald-400"
                                         : row.status === "Pending" || row.status === "pending"
-                                          ? "bg-amber-500/20 text-amber-400"
+                                        ? "bg-amber-500/20 text-amber-400"
                                           : row.status === "Running" || row.status === "running"
-                                            ? "bg-sky-500/20 text-sky-400"
+                                          ? "bg-sky-500/20 text-sky-400"
                                             : row.status === "Failed" || row.status === "failed"
                                               ? "bg-red-500/20 text-red-400"
-                                              : "bg-muted text-muted-foreground"
-                                    )}
-                                  >
+                                          : "bg-muted text-muted-foreground"
+                                  )}
+                                >
                                     {row.status || "-"}
-                                  </Badge>
-                                </td>
+                                </Badge>
+                              </td>
                                 <td className="py-3 px-4 text-right">
                                   <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                                        <MoreVertical className="h-4 w-4" />
-                                      </Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="w-40">
                                       <DropdownMenuItem
@@ -973,13 +1197,44 @@ export default function TaskDetailPage() {
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
-                                </td>
-                              </tr>
+                              </td>
+                            </tr>
                             ))
                         )}
                       </tbody>
                     </table>
                   </div>
+                  {totalEntries > 0 && (
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-muted-foreground">
+                      <span>
+                        Showing {pageRangeStart.toLocaleString()}-{pageRangeEnd.toLocaleString()} of{" "}
+                        {totalEntries.toLocaleString()}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="px-3"
+                          onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                          disabled={currentPage === 1}
+                        >
+                          Previous
+                        </Button>
+                        <span className="min-w-[60px] text-center">
+                          Page {currentPage}/{totalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="px-3"
+                          onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                          disabled={currentPage === totalPages || totalEntries === 0}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </>
